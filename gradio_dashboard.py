@@ -171,6 +171,7 @@ def create_timeseries_chart(df, metrics, title, selected_year, selected_quarter)
     fig = go.Figure()
 
     colors = ['#2E86AB', '#A23B72', '#F18F01', '#C73E1D', '#3B1F2B', '#95C623']
+    x_labels = []
 
     for i, (mdrm, name) in enumerate(metrics):
         metric_data = df[df["mdrm_code"] == mdrm].sort_values(["year", "quarter"])
@@ -188,10 +189,24 @@ def create_timeseries_chart(df, metrics, title, selected_year, selected_quarter)
                 marker=dict(size=6)
             ))
 
-    # Add vertical line for selected quarter
+    # Add vertical line for selected quarter using shape (works with categorical x-axis)
     selected_label = f"{selected_year} Q{selected_quarter}"
-    fig.add_vline(x=selected_label, line_dash="dash", line_color="red", line_width=2,
-                  annotation_text="Selected", annotation_position="top")
+    if selected_label in x_labels:
+        selected_idx = x_labels.index(selected_label)
+        fig.add_shape(
+            type="line",
+            x0=selected_idx, x1=selected_idx,
+            y0=0, y1=1,
+            yref="paper",
+            line=dict(color="red", width=2, dash="dash")
+        )
+        fig.add_annotation(
+            x=selected_idx, y=1.05,
+            yref="paper",
+            text="Selected",
+            showarrow=False,
+            font=dict(color="red", size=10)
+        )
 
     fig.update_layout(
         title=dict(text=title, font=dict(size=16)),
