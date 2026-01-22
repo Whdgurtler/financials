@@ -411,10 +411,8 @@ def create_dashboard():
             quarter_dropdown = gr.Dropdown(
                 choices=quarter_choices,
                 value=default_quarter,
-                label="Select As-Of Date",
-                scale=1
+                label="Select As-Of Date"
             )
-            gr.Markdown("", scale=3)
 
         gr.Markdown("## Key Metrics Summary")
         summary_html = gr.HTML(value=initial_outputs[0])

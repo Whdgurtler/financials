@@ -37,20 +37,20 @@ def load_financial_data():
 
 def generate_sample_historical_data():
     """Generate sample historical data for demonstration purposes."""
-    # Key metrics and their base values (from current data)
+    # Key metrics and their base values in THOUSANDS (realistic for USAA ~$200B holding company)
     metrics = {
-        "BHCK2170": {"name": "Total Assets", "base": 150000000, "statement": "balance_sheet", "category": "assets"},
-        "BHCK2948": {"name": "Total Liabilities", "base": 130000000, "statement": "balance_sheet", "category": "liabilities"},
-        "BHCK3210": {"name": "Total Equity", "base": 20000000, "statement": "balance_sheet", "category": "equity"},
-        "BHCKB528": {"name": "Net Loans", "base": 78500000, "statement": "balance_sheet", "category": "assets"},
-        "BHDM6636": {"name": "Interest-bearing Deposits", "base": 100000000, "statement": "balance_sheet", "category": "liabilities"},
-        "BHCK4010": {"name": "Total Interest Income", "base": 5000000, "statement": "income_statement", "category": "interest_income"},
-        "BHCK4073": {"name": "Total Interest Expense", "base": 1500000, "statement": "income_statement", "category": "interest_expense"},
-        "BHCK4074": {"name": "Net Interest Income", "base": 3500000, "statement": "income_statement", "category": "net_interest_income"},
-        "BHCK4079": {"name": "Total Noninterest Income", "base": 2000000, "statement": "income_statement", "category": "noninterest_income"},
-        "BHCK4093": {"name": "Total Noninterest Expense", "base": 3000000, "statement": "income_statement", "category": "noninterest_expense"},
-        "BHCK4340": {"name": "Net Income", "base": 1500000, "statement": "income_statement", "category": "income"},
-        "BHCK4230": {"name": "Provision for Loan Losses", "base": 500000, "statement": "income_statement", "category": "provision"},
+        "BHCK2170": {"name": "Total Assets", "base": 200000000, "statement": "balance_sheet", "category": "assets"},  # $200B
+        "BHCK2948": {"name": "Total Liabilities", "base": 165000000, "statement": "balance_sheet", "category": "liabilities"},  # $165B
+        "BHCK3210": {"name": "Total Equity", "base": 35000000, "statement": "balance_sheet", "category": "equity"},  # $35B
+        "BHCKB528": {"name": "Net Loans", "base": 95000000, "statement": "balance_sheet", "category": "assets"},  # $95B
+        "BHDM6636": {"name": "Interest-bearing Deposits", "base": 120000000, "statement": "balance_sheet", "category": "liabilities"},  # $120B
+        "BHCK4010": {"name": "Total Interest Income", "base": 8500000, "statement": "income_statement", "category": "interest_income"},  # $8.5B
+        "BHCK4073": {"name": "Total Interest Expense", "base": 2800000, "statement": "income_statement", "category": "interest_expense"},  # $2.8B
+        "BHCK4074": {"name": "Net Interest Income", "base": 5700000, "statement": "income_statement", "category": "net_interest_income"},  # $5.7B
+        "BHCK4079": {"name": "Total Noninterest Income", "base": 12000000, "statement": "income_statement", "category": "noninterest_income"},  # $12B (insurance)
+        "BHCK4093": {"name": "Total Noninterest Expense", "base": 13500000, "statement": "income_statement", "category": "noninterest_expense"},  # $13.5B
+        "BHCK4340": {"name": "Net Income", "base": 4000000, "statement": "income_statement", "category": "income"},  # $4B
+        "BHCK4230": {"name": "Provision for Loan Losses", "base": 800000, "statement": "income_statement", "category": "provision"},  # $800M
     }
 
     # Generate 20 quarters of historical data (2021 Q1 to 2025 Q4)
@@ -428,10 +428,8 @@ def create_dashboard():
             quarter_dropdown = gr.Dropdown(
                 choices=quarter_choices,
                 value=default_quarter,
-                label="Select As-Of Date",
-                scale=1
+                label="Select As-Of Date"
             )
-            gr.Markdown("", scale=3)  # Spacer
 
         # Summary Stats Section
         gr.Markdown("## Key Metrics Summary")

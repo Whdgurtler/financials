@@ -9,7 +9,8 @@
       "Bash(git branch:*)",
       "Bash(git push:*)",
       "Bash(git remote:*)",
-      "Bash(git commit -m \"$\\(cat <<''EOF''\nReorganize codebase into proper package structure\n\n- Move core modules to src/y9c/ package \\(config, database, loader, downloader, cli\\)\n- Create src/dashboard/ package for Gradio visualization\n- Add comprehensive README.md with usage instructions\n- Update requirements.txt with all dependencies\n- Update .gitignore to exclude large data files\n- Remove duplicate root-level files\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")"
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nReorganize codebase into proper package structure\n\n- Move core modules to src/y9c/ package \\(config, database, loader, downloader, cli\\)\n- Create src/dashboard/ package for Gradio visualization\n- Add comprehensive README.md with usage instructions\n- Update requirements.txt with all dependencies\n- Update .gitignore to exclude large data files\n- Remove duplicate root-level files\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(unzip:*)"
     ]
   }
 }
