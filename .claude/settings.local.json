@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(sqlite3:*)",
+      "Bash(git init:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nInitial commit: USAA Y-9C financial data scraper and dashboard\n\n- Y-9C data scraper for downloading FR Y-9C regulatory filings\n- SQLite database for storing quarterly financial data\n- Gradio dashboard with summary stats, Y-o-Y comparisons, and timeseries charts\n- Support for balance sheet and income statement analysis\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")"
+    ]
+  }
+}

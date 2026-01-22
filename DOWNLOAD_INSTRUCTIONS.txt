@@ -1,0 +1,50 @@
+======================================================================
+Y-9C DATA MANUAL DOWNLOAD INSTRUCTIONS
+======================================================================
+
+Missing quarters: 20
+
+STEP 1: Go to the FFIEC Financial Data Download page:
+        https://www.ffiec.gov/npw/FinancialReport/FinancialDataDownload
+
+STEP 2: For each quarter below, do the following:
+        a) Select Report Type: BHCF (FR Y-9C)
+        b) Select the Year
+        c) Select the Quarter
+        d) Click 'Download'
+        e) Save the ZIP file
+
+STEP 3: Place all downloaded files in:
+        C:\Users\whdgu\usaa_y9c_scraper\data\manual_downloads
+
+STEP 4: Re-run the scraper:
+        python run_scraper.py --init
+
+----------------------------------------------------------------------
+QUARTERS TO DOWNLOAD:
+----------------------------------------------------------------------
+
+  [ ] 2020 Q1  (Report Date: 2020-03-31)
+  [ ] 2020 Q2  (Report Date: 2020-06-30)
+  [ ] 2020 Q3  (Report Date: 2020-09-30)
+  [ ] 2020 Q4  (Report Date: 2020-12-31)
+  [ ] 2021 Q1  (Report Date: 2021-03-31)
+  [ ] 2021 Q2  (Report Date: 2021-06-30)
+  [ ] 2021 Q3  (Report Date: 2021-09-30)
+  [ ] 2021 Q4  (Report Date: 2021-12-31)
+  [ ] 2022 Q1  (Report Date: 2022-03-31)
+  [ ] 2022 Q2  (Report Date: 2022-06-30)
+  [ ] 2022 Q3  (Report Date: 2022-09-30)
+  [ ] 2022 Q4  (Report Date: 2022-12-31)
+  [ ] 2023 Q1  (Report Date: 2023-03-31)
+  [ ] 2023 Q2  (Report Date: 2023-06-30)
+  [ ] 2023 Q3  (Report Date: 2023-09-30)
+  [ ] 2023 Q4  (Report Date: 2023-12-31)
+  [ ] 2024 Q1  (Report Date: 2024-03-31)
+  [ ] 2024 Q2  (Report Date: 2024-06-30)
+  [ ] 2024 Q3  (Report Date: 2024-09-30)
+  [ ] 2024 Q4  (Report Date: 2024-12-31)
+
+======================================================================
+Total files to download: 20
+======================================================================
