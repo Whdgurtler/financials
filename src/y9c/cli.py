@@ -1,65 +1,43 @@
 """
-Y-9C Data Scraper - Main Entry Point
-
-This script orchestrates the full Y-9C data collection process:
-1. Downloads bulk data files from FFIEC/Chicago Fed
-2. Creates/initializes the SQLite database
-3. Parses and loads data for USAA holding company
-4. Filters to income statement and balance sheet line items
+Y-9C Data Scraper - Command Line Interface
 
 Usage:
-    # Full initial load (2000 to present)
-    python run_scraper.py --init
-
-    # Quarterly update (only new data)
-    python run_scraper.py --update
-
-    # Export data to CSV
-    python run_scraper.py --export
-
-    # View data summary
-    python run_scraper.py --summary
+    python -m src.y9c.cli --init          # Full download and load
+    python -m src.y9c.cli --update        # Quarterly update
+    python -m src.y9c.cli --summary       # View data summary
+    python -m src.y9c.cli --export        # Export to CSV
 """
 
 import argparse
 from pathlib import Path
 from datetime import datetime
 
-from y9c_config import USAA_HOLDING_COMPANY_RSSD, get_all_mdrm_codes
-from y9c_database import (
+from .config import USAA_HOLDING_COMPANY_RSSD, get_all_mdrm_codes
+from .database import (
     initialize_database,
-    get_connection,
     get_balance_sheet,
     get_income_statement,
     get_all_periods,
     export_to_csv,
     DB_PATH,
 )
-from y9c_downloader import download_all_y9c_data, check_existing_data
-from y9c_loader import load_all_data, incremental_update, validate_data
+from .downloader import download_all_y9c_data, check_existing_data
+from .loader import load_all_data, incremental_update, validate_data
 
 
 def full_initialization(start_year=2000, end_year=None):
-    """
-    Perform full initialization:
-    1. Download all data files
-    2. Initialize database
-    3. Load all data
-    """
+    """Perform full initialization."""
     print("=" * 70)
     print("USAA Y-9C Data Scraper - Full Initialization")
     print("=" * 70)
 
-    # Step 1: Initialize database
     print("\n[1/3] Initializing database...")
     initialize_database()
 
-    # Step 2: Download data files
     print("\n[2/3] Downloading Y-9C bulk data files...")
     downloaded = download_all_y9c_data(start_year, end_year)
     print(f"Downloaded {len(downloaded)} files.")
 
-    # Step 3: Load data into database
     print("\n[3/3] Loading data into database...")
     total = load_all_data(start_year, end_year, USAA_HOLDING_COMPANY_RSSD)
 
@@ -71,23 +49,16 @@ def full_initialization(start_year=2000, end_year=None):
 
 
 def quarterly_update():
-    """
-    Perform quarterly update:
-    1. Download any new data files
-    2. Load new data into database
-    """
+    """Perform quarterly update."""
     print("=" * 70)
     print("USAA Y-9C Data Scraper - Quarterly Update")
     print("=" * 70)
 
     current_year = datetime.now().year
-    current_quarter = (datetime.now().month - 1) // 3 + 1
 
-    # Download recent quarters (current year and previous)
     print("\n[1/2] Checking for new data files...")
     download_all_y9c_data(current_year - 1, current_year)
 
-    # Load new data
     print("\n[2/2] Loading new data...")
     new_records = incremental_update(USAA_HOLDING_COMPANY_RSSD)
 
@@ -103,7 +74,6 @@ def show_summary():
     print(f"USAA Y-9C Data Summary (RSSD: {USAA_HOLDING_COMPANY_RSSD})")
     print("=" * 70)
 
-    # Get available periods
     periods = get_all_periods(USAA_HOLDING_COMPANY_RSSD)
 
     if not periods:
@@ -113,7 +83,6 @@ def show_summary():
     print(f"\nAvailable periods: {len(periods)}")
     print(f"Date range: {periods[0][2]} to {periods[-1][2]}")
 
-    # Get most recent balance sheet
     latest_year, latest_quarter, latest_date = periods[-1]
     print(f"\n--- Most Recent Data ({latest_date}) ---")
 
@@ -136,7 +105,6 @@ def show_summary():
     if 'Net income attributable to holding company' in inc:
         print(f"  Net Income: ${inc['Net income attributable to holding company']:,.0f} (thousands)")
 
-    # Data validation
     print("\n--- Data Coverage ---")
     validate_data()
 
@@ -144,7 +112,7 @@ def show_summary():
 def export_data(output_dir=None):
     """Export all data to CSV files."""
     if output_dir is None:
-        output_dir = Path(__file__).parent / "data" / "exports"
+        output_dir = Path(__file__).parent.parent.parent / "data" / "exports"
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -153,15 +121,12 @@ def export_data(output_dir=None):
 
     print("Exporting data to CSV...")
 
-    # Export balance sheet
     bs_path = output_dir / f"usaa_balance_sheet_{timestamp}.csv"
     export_to_csv(USAA_HOLDING_COMPANY_RSSD, bs_path, statement_type='balance_sheet')
 
-    # Export income statement
     inc_path = output_dir / f"usaa_income_statement_{timestamp}.csv"
     export_to_csv(USAA_HOLDING_COMPANY_RSSD, inc_path, statement_type='income_statement')
 
-    # Export all data
     all_path = output_dir / f"usaa_all_financial_data_{timestamp}.csv"
     export_to_csv(USAA_HOLDING_COMPANY_RSSD, all_path)
 
@@ -201,12 +166,12 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python run_scraper.py --init              # Full download and load (2000-present)
-  python run_scraper.py --init --start 2015 # Load from 2015 onwards
-  python run_scraper.py --update            # Quarterly incremental update
-  python run_scraper.py --summary           # View data summary
-  python run_scraper.py --export            # Export to CSV files
-  python run_scraper.py --config            # Show configuration
+  python -m src.y9c.cli --init              # Full download and load (2000-present)
+  python -m src.y9c.cli --init --start 2015 # Load from 2015 onwards
+  python -m src.y9c.cli --update            # Quarterly incremental update
+  python -m src.y9c.cli --summary           # View data summary
+  python -m src.y9c.cli --export            # Export to CSV files
+  python -m src.y9c.cli --config            # Show configuration
         """
     )
 

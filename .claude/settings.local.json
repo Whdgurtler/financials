@@ -4,7 +4,12 @@
       "Bash(sqlite3:*)",
       "Bash(git init:*)",
       "Bash(git add:*)",
-      "Bash(git commit -m \"$\\(cat <<''EOF''\nInitial commit: USAA Y-9C financial data scraper and dashboard\n\n- Y-9C data scraper for downloading FR Y-9C regulatory filings\n- SQLite database for storing quarterly financial data\n- Gradio dashboard with summary stats, Y-o-Y comparisons, and timeseries charts\n- Support for balance sheet and income statement analysis\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")"
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nInitial commit: USAA Y-9C financial data scraper and dashboard\n\n- Y-9C data scraper for downloading FR Y-9C regulatory filings\n- SQLite database for storing quarterly financial data\n- Gradio dashboard with summary stats, Y-o-Y comparisons, and timeseries charts\n- Support for balance sheet and income statement analysis\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git remote add:*)",
+      "Bash(git branch:*)",
+      "Bash(git push:*)",
+      "Bash(git remote:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nReorganize codebase into proper package structure\n\n- Move core modules to src/y9c/ package \\(config, database, loader, downloader, cli\\)\n- Create src/dashboard/ package for Gradio visualization\n- Add comprehensive README.md with usage instructions\n- Update requirements.txt with all dependencies\n- Update .gitignore to exclude large data files\n- Remove duplicate root-level files\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")"
     ]
   }
 }

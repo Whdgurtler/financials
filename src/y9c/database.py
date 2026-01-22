@@ -1,5 +1,6 @@
 """
 Y-9C Database Module
+
 Creates and manages a SQLite database for storing Y-9C regulatory data.
 
 Database Schema:
@@ -12,9 +13,11 @@ Database Schema:
 import sqlite3
 from pathlib import Path
 from datetime import datetime
-from y9c_config import get_all_mdrm_codes, USAA_HOLDING_COMPANY_RSSD
 
-DB_PATH = Path(__file__).parent / "data" / "usaa_y9c.db"
+from .config import get_all_mdrm_codes, USAA_HOLDING_COMPANY_RSSD
+
+# Database path - stored in data/ directory at project root
+DB_PATH = Path(__file__).parent.parent.parent / "data" / "usaa_y9c.db"
 
 
 def get_connection():
@@ -30,7 +33,6 @@ def create_schema():
     conn = get_connection()
     cursor = conn.cursor()
 
-    # Institutions table - stores entity information
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS institutions (
             rssd_id TEXT PRIMARY KEY,
@@ -45,7 +47,6 @@ def create_schema():
         )
     """)
 
-    # Account definitions table - MDRM code mappings
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS account_definitions (
             mdrm_code TEXT PRIMARY KEY,
@@ -57,7 +58,6 @@ def create_schema():
         )
     """)
 
-    # Financial data table - the main data store
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS financial_data (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -73,7 +73,6 @@ def create_schema():
         )
     """)
 
-    # Load history table - track data loads
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS load_history (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -87,7 +86,7 @@ def create_schema():
         )
     """)
 
-    # Create indexes for common queries
+    # Create indexes
     cursor.execute("""
         CREATE INDEX IF NOT EXISTS idx_financial_data_rssd
         ON financial_data(rssd_id)
@@ -229,18 +228,7 @@ def get_loaded_quarters():
 
 
 def get_balance_sheet(rssd_id, report_date=None, year=None, quarter=None):
-    """
-    Get balance sheet data for an institution.
-
-    Args:
-        rssd_id: Institution RSSD ID
-        report_date: Specific date, or use year/quarter
-        year: Year (alternative to report_date)
-        quarter: Quarter (alternative to report_date)
-
-    Returns:
-        Dictionary of account_name: value
-    """
+    """Get balance sheet data for an institution."""
     conn = get_connection()
     cursor = conn.cursor()
 
@@ -269,18 +257,7 @@ def get_balance_sheet(rssd_id, report_date=None, year=None, quarter=None):
 
 
 def get_income_statement(rssd_id, report_date=None, year=None, quarter=None):
-    """
-    Get income statement data for an institution.
-
-    Args:
-        rssd_id: Institution RSSD ID
-        report_date: Specific date, or use year/quarter
-        year: Year (alternative to report_date)
-        quarter: Quarter (alternative to report_date)
-
-    Returns:
-        Dictionary of account_name: value
-    """
+    """Get income statement data for an institution."""
     conn = get_connection()
     cursor = conn.cursor()
 
@@ -309,19 +286,7 @@ def get_income_statement(rssd_id, report_date=None, year=None, quarter=None):
 
 
 def get_time_series(rssd_id, mdrm_code=None, account_name=None, start_year=None, end_year=None):
-    """
-    Get time series data for a specific account.
-
-    Args:
-        rssd_id: Institution RSSD ID
-        mdrm_code: MDRM code (or use account_name)
-        account_name: Account name (alternative to mdrm_code)
-        start_year: Start year filter
-        end_year: End year filter
-
-    Returns:
-        List of (report_date, value) tuples
-    """
+    """Get time series data for a specific account."""
     conn = get_connection()
     cursor = conn.cursor()
 
@@ -373,14 +338,7 @@ def get_all_periods(rssd_id):
 
 
 def export_to_csv(rssd_id, output_path, statement_type=None):
-    """
-    Export data to CSV format.
-
-    Args:
-        rssd_id: Institution RSSD ID
-        output_path: Output file path
-        statement_type: Optional filter ('balance_sheet', 'income_statement', etc.)
-    """
+    """Export data to CSV format."""
     import csv
 
     conn = get_connection()
@@ -419,7 +377,6 @@ def initialize_database():
     create_schema()
     populate_account_definitions()
 
-    # Add USAA holding company
     add_institution(
         rssd_id=USAA_HOLDING_COMPANY_RSSD,
         name="United Services Automobile Association",
