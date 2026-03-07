@@ -1,5 +1,7 @@
 """
-Y-9C Data Scraper - Command Line Interface
+Bank Holding Company Y-9C Data Scraper - Command Line Interface
+
+Downloads and loads FR Y-9C data for all U.S. bank holding companies.
 
 Usage:
     python -m src.y9c.cli --init          # Full download and load
@@ -26,9 +28,9 @@ from .loader import load_all_data, incremental_update, validate_data
 
 
 def full_initialization(start_year=2000, end_year=None):
-    """Perform full initialization."""
+    """Perform full initialization - download and load all BHC data."""
     print("=" * 70)
-    print("USAA Y-9C Data Scraper - Full Initialization")
+    print("Bank Holding Company Y-9C Data Scraper - Full Initialization")
     print("=" * 70)
 
     print("\n[1/3] Initializing database...")
@@ -51,7 +53,7 @@ def full_initialization(start_year=2000, end_year=None):
 def quarterly_update():
     """Perform quarterly update."""
     print("=" * 70)
-    print("USAA Y-9C Data Scraper - Quarterly Update")
+    print("Bank Holding Company Y-9C Data Scraper - Quarterly Update")
     print("=" * 70)
 
     current_year = datetime.now().year
@@ -69,9 +71,9 @@ def quarterly_update():
 
 
 def show_summary():
-    """Display summary of available data."""
+    """Display summary of available data for the default institution."""
     print("=" * 70)
-    print(f"USAA Y-9C Data Summary (RSSD: {USAA_HOLDING_COMPANY_RSSD})")
+    print(f"Y-9C Data Summary (RSSD: {USAA_HOLDING_COMPANY_RSSD})")
     print("=" * 70)
 
     periods = get_all_periods(USAA_HOLDING_COMPANY_RSSD)
@@ -162,7 +164,7 @@ def print_config():
 
 def main():
     parser = argparse.ArgumentParser(
-        description="USAA Y-9C Data Scraper",
+        description="Bank Holding Company Y-9C Data Scraper",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:

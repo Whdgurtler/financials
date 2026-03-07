@@ -1,12 +1,14 @@
 """
 Y-9C Data Loader
 
-Parses downloaded Y-9C bulk data files and loads them into the database.
+Parses downloaded FR Y-9C bulk data files and loads them into the database.
+Supports data for all ~4,000 U.S. bank holding companies.
 
 This module handles:
 1. Parsing caret-delimited (^) text files from FFIEC
-2. Filtering data to relevant MDRM codes
-3. Loading filtered data into SQLite database
+2. Parsing comma-delimited CSV files from Chicago Fed
+3. Filtering data to relevant MDRM codes
+4. Loading filtered data into SQLite database
 """
 
 import zipfile
@@ -67,6 +69,35 @@ def parse_caret_delimited_file(file_path, target_rssd=None, mdrm_filter=None):
 
                 records.append(record)
 
+    except Exception as e:
+        print(f"  Error parsing {file_path}: {e}")
+
+    return records
+
+
+def parse_chicago_fed_csv_file(file_path, target_rssd=None, mdrm_filter=None):
+    """
+    Parse a comma-delimited Chicago Fed bulk CSV file.
+
+    Chicago Fed files use commas (not carets) and are pre-extracted (no ZIP).
+    Column headers are MDRM codes; RSSD column is RSSD9001.
+    """
+    import csv as csv_module
+
+    records = []
+    try:
+        with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+            reader = csv_module.DictReader(f)
+            for row in reader:
+                normalized = {k.upper().strip(): v.strip() for k, v in row.items() if k}
+                rssd = normalized.get("RSSD9001", "").strip()
+                if not rssd:
+                    continue
+                if target_rssd and rssd != target_rssd:
+                    continue
+                # Alias so extract_financial_data can find the RSSD
+                normalized["IDRSSD"] = rssd
+                records.append(normalized)
     except Exception as e:
         print(f"  Error parsing {file_path}: {e}")
 
@@ -152,14 +183,14 @@ def process_zip_file(zip_path, target_rssd=None, mdrm_filter=None):
     return records
 
 
-def load_quarter(year, quarter, target_rssd=USAA_HOLDING_COMPANY_RSSD, force=False):
+def load_quarter(year, quarter, target_rssd=None, force=False):
     """
     Load data for a specific quarter.
 
     Args:
         year: Year to load
         quarter: Quarter to load (1-4)
-        target_rssd: Institution to load
+        target_rssd: RSSD ID to filter to one institution, or None to load all
         force: Force reload even if already loaded
 
     Returns:
@@ -170,48 +201,58 @@ def load_quarter(year, quarter, target_rssd=USAA_HOLDING_COMPANY_RSSD, force=Fal
         print(f"  {year} Q{quarter} already loaded. Use force=True to reload.")
         return 0
 
-    zip_patterns = [
-        DATA_DIR / f"BHCF_{year}Q{quarter}.zip",
-        DATA_DIR / f"BHCF_{year}Q{quarter}_chicago.zip",
+    # Check for source files in priority order (FFIEC zip, then Chicago Fed csv/zip)
+    candidates = [
+        (DATA_DIR / f"BHCF_{year}Q{quarter}.zip", "zip"),
+        (DATA_DIR / f"BHCF_{year}Q{quarter}_ffiec.zip", "zip"),
+        (DATA_DIR / f"BHCF_{year}Q{quarter}_chicago.csv", "csv"),
+        (DATA_DIR / f"BHCF_{year}Q{quarter}_chicago.zip", "zip"),
     ]
 
-    zip_path = None
-    for pattern in zip_patterns:
-        if pattern.exists():
-            zip_path = pattern
+    source_file = None
+    source_type = None
+    for path, ftype in candidates:
+        if path.exists():
+            source_file = path
+            source_type = ftype
             break
 
-    if not zip_path:
+    if not source_file:
         print(f"  No data file found for {year} Q{quarter}")
         return 0
 
-    print(f"  Processing {zip_path.name}...")
+    print(f"  Processing {source_file.name}...")
 
     mdrm_filter = get_mdrm_codes_list()
-    records = process_zip_file(zip_path, target_rssd=target_rssd, mdrm_filter=mdrm_filter)
+    if source_type == "csv":
+        records = parse_chicago_fed_csv_file(source_file, target_rssd=target_rssd, mdrm_filter=mdrm_filter)
+        print(f"    Parsed {len(records)} institution records")
+    else:
+        records = process_zip_file(source_file, target_rssd=target_rssd, mdrm_filter=mdrm_filter)
 
     if not records:
-        print(f"  No records found for RSSD {target_rssd} in {year} Q{quarter}")
-        record_load(year, quarter, str(zip_path), 0, 'no_data')
+        label = f"RSSD {target_rssd}" if target_rssd else "any institution"
+        print(f"  No records found for {label} in {year} Q{quarter}")
+        record_load(year, quarter, str(source_file), 0, 'no_data')
         return 0
 
     data_tuples = extract_financial_data(records, year, quarter, mdrm_filter)
 
     if not data_tuples:
         print(f"  No matching MDRM codes found in {year} Q{quarter}")
-        record_load(year, quarter, str(zip_path), 0, 'no_matching_codes')
+        record_load(year, quarter, str(source_file), 0, 'no_matching_codes')
         return 0
 
     bulk_insert_financial_data(data_tuples)
     print(f"  Loaded {len(data_tuples)} data points for {year} Q{quarter}")
 
-    record_load(year, quarter, str(zip_path), len(data_tuples), 'completed')
+    record_load(year, quarter, str(source_file), len(data_tuples), 'completed')
 
     return len(data_tuples)
 
 
-def load_all_data(start_year=2000, end_year=None, target_rssd=USAA_HOLDING_COMPANY_RSSD):
-    """Load all available data into the database."""
+def load_all_data(start_year=2000, end_year=None, target_rssd=None):
+    """Load all available data into the database for a specific institution."""
     if end_year is None:
         end_year = datetime.now().year
 
@@ -220,7 +261,7 @@ def load_all_data(start_year=2000, end_year=None, target_rssd=USAA_HOLDING_COMPA
 
     total_loaded = 0
 
-    print(f"Loading Y-9C data for RSSD {target_rssd}...")
+    print(f"Loading Y-9C data for institution RSSD {target_rssd}...")
     print(f"Period: {start_year} to {end_year}")
     print("=" * 60)
 
@@ -239,8 +280,8 @@ def load_all_data(start_year=2000, end_year=None, target_rssd=USAA_HOLDING_COMPA
     return total_loaded
 
 
-def incremental_update(target_rssd=USAA_HOLDING_COMPANY_RSSD):
-    """Perform incremental update - only load new quarters."""
+def incremental_update(target_rssd=None):
+    """Perform incremental update - only load new quarters for a specific institution."""
     loaded_quarters = set(get_loaded_quarters())
 
     current_year = datetime.now().year
@@ -267,8 +308,8 @@ def incremental_update(target_rssd=USAA_HOLDING_COMPANY_RSSD):
     return new_loaded
 
 
-def validate_data():
-    """Validate loaded data for completeness."""
+def validate_data(rssd_id=USAA_HOLDING_COMPANY_RSSD):
+    """Validate loaded data for completeness for a specific institution."""
     conn = get_connection()
     cursor = conn.cursor()
 
@@ -279,7 +320,7 @@ def validate_data():
         WHERE rssd_id = ?
         GROUP BY year, quarter
         ORDER BY year, quarter
-    """, (USAA_HOLDING_COMPANY_RSSD,))
+    """, (rssd_id,))
 
     print("\nData Coverage Summary:")
     print("-" * 50)

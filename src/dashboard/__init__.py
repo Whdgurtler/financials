@@ -1,4 +1,4 @@
-"""Dashboard module for USAA Y-9C financial data visualization."""
+"""Dashboard module for Bank Holding Company Y-9C financial data visualization."""
 
 from .app import create_dashboard, launch_dashboard
 

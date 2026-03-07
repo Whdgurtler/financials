@@ -1,16 +1,16 @@
 """
 Y-9C Data Configuration
 
-Contains USAA identifiers, data mappings, and line item definitions for
-income statement and balance sheet construction.
+Contains MDRM code definitions and line item mappings for income statement
+and balance sheet construction from FR Y-9C regulatory filings.
 
 This file defines the MDRM codes needed to build financial statements
-from FR Y-9C regulatory filings.
+for all U.S. bank holding companies.
 """
 
-# USAA Identifiers
-USAA_HOLDING_COMPANY_RSSD = "1447376"  # United Services Automobile Association (parent)
-USAA_FSB_RSSD = "619877"  # USAA Federal Savings Bank (subsidiary)
+# Default institution identifiers (USAA used as example)
+USAA_HOLDING_COMPANY_RSSD = "1447376"  # United Services Automobile Association
+USAA_FSB_RSSD = "619877"  # USAA Federal Savings Bank
 
 # Data source configuration
 DATA_START_YEAR = 2000

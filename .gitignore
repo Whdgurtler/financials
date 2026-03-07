@@ -39,6 +39,8 @@ env/
 data/raw/
 data/processed/
 data/manual_downloads/
+data/bulk/
+*.db
 
 # OS
 .DS_Store

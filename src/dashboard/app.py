@@ -1,7 +1,8 @@
 """
-USAA Y-9C Financial Dashboard
+Bank Holding Company Y-9C Financial Dashboard
 
 Gradio interface for viewing quarterly financial data with Y-o-Y comparisons.
+Supports all major U.S. bank holding companies.
 """
 
 import gradio as gr
@@ -9,7 +10,6 @@ import pandas as pd
 import sqlite3
 import plotly.graph_objects as go
 from pathlib import Path
-import numpy as np
 
 # Database path - at project root
 DB_PATH = Path(__file__).parent.parent.parent / "data" / "usaa_y9c.db"
@@ -20,76 +20,47 @@ def get_db_connection():
     return sqlite3.connect(DB_PATH)
 
 
-def load_financial_data():
-    """Load all financial data from database."""
+def get_available_institutions():
+    """Get list of institutions available in the database."""
+    try:
+        conn = get_db_connection()
+        query = """
+            SELECT DISTINCT fd.rssd_id, i.name
+            FROM financial_data fd
+            LEFT JOIN institutions i ON fd.rssd_id = i.rssd_id
+            ORDER BY i.name
+        """
+        df = pd.read_sql_query(query, conn)
+        conn.close()
+        return df
+    except Exception:
+        return pd.DataFrame(columns=["rssd_id", "name"])
+
+
+def load_financial_data(rssd_id=None):
+    """Load financial data from database for a specific institution."""
     conn = get_db_connection()
-    query = """
-        SELECT fd.report_date, fd.year, fd.quarter, fd.mdrm_code, fd.value,
-               ad.account_name, ad.statement_type, ad.category
-        FROM financial_data fd
-        JOIN account_definitions ad ON fd.mdrm_code = ad.mdrm_code
-        ORDER BY fd.year, fd.quarter
-    """
-    df = pd.read_sql_query(query, conn)
+    if rssd_id:
+        query = """
+            SELECT fd.report_date, fd.year, fd.quarter, fd.mdrm_code, fd.value,
+                   ad.account_name, ad.statement_type, ad.category
+            FROM financial_data fd
+            JOIN account_definitions ad ON fd.mdrm_code = ad.mdrm_code
+            WHERE fd.rssd_id = ?
+            ORDER BY fd.year, fd.quarter
+        """
+        df = pd.read_sql_query(query, conn, params=[rssd_id])
+    else:
+        query = """
+            SELECT fd.report_date, fd.year, fd.quarter, fd.mdrm_code, fd.value,
+                   ad.account_name, ad.statement_type, ad.category
+            FROM financial_data fd
+            JOIN account_definitions ad ON fd.mdrm_code = ad.mdrm_code
+            ORDER BY fd.year, fd.quarter
+        """
+        df = pd.read_sql_query(query, conn)
     conn.close()
     return df
-
-
-def generate_sample_historical_data():
-    """Generate sample historical data for demonstration purposes."""
-    metrics = {
-        "BHCK2170": {"name": "Total Assets", "base": 150000000, "statement": "balance_sheet", "category": "assets"},
-        "BHCK2948": {"name": "Total Liabilities", "base": 130000000, "statement": "balance_sheet", "category": "liabilities"},
-        "BHCK3210": {"name": "Total Equity", "base": 20000000, "statement": "balance_sheet", "category": "equity"},
-        "BHCKB528": {"name": "Net Loans", "base": 78500000, "statement": "balance_sheet", "category": "assets"},
-        "BHDM6636": {"name": "Interest-bearing Deposits", "base": 100000000, "statement": "balance_sheet", "category": "liabilities"},
-        "BHCK4010": {"name": "Total Interest Income", "base": 5000000, "statement": "income_statement", "category": "interest_income"},
-        "BHCK4073": {"name": "Total Interest Expense", "base": 1500000, "statement": "income_statement", "category": "interest_expense"},
-        "BHCK4074": {"name": "Net Interest Income", "base": 3500000, "statement": "income_statement", "category": "net_interest_income"},
-        "BHCK4079": {"name": "Total Noninterest Income", "base": 2000000, "statement": "income_statement", "category": "noninterest_income"},
-        "BHCK4093": {"name": "Total Noninterest Expense", "base": 3000000, "statement": "income_statement", "category": "noninterest_expense"},
-        "BHCK4340": {"name": "Net Income", "base": 1500000, "statement": "income_statement", "category": "income"},
-        "BHCK4230": {"name": "Provision for Loan Losses", "base": 500000, "statement": "income_statement", "category": "provision"},
-    }
-
-    quarters = []
-    for year in [2021, 2022, 2023, 2024, 2025]:
-        for q in [1, 2, 3, 4]:
-            quarter_end = {1: "03-31", 2: "06-30", 3: "09-30", 4: "12-31"}[q]
-            quarters.append({
-                "year": year,
-                "quarter": q,
-                "report_date": f"{year}-{quarter_end}"
-            })
-
-    data_rows = []
-    np.random.seed(42)
-
-    total_quarters = len(quarters)
-    for metric, info in metrics.items():
-        for i, qtr in enumerate(quarters):
-            quarter_idx = i
-            trend = 1 + (0.02 * quarter_idx)
-            seasonal = 1 + 0.03 * np.sin(2 * np.pi * qtr["quarter"] / 4)
-            noise = 1 + np.random.normal(0, 0.02)
-
-            if "expense" in info["category"].lower() or "provision" in info["category"].lower():
-                trend = 1 + (0.015 * quarter_idx)
-
-            value = info["base"] * trend * seasonal * noise / (1 + 0.02 * (total_quarters - 1))
-
-            data_rows.append({
-                "report_date": qtr["report_date"],
-                "year": qtr["year"],
-                "quarter": qtr["quarter"],
-                "mdrm_code": metric,
-                "account_name": info["name"],
-                "statement_type": info["statement"],
-                "category": info["category"],
-                "value": value
-            })
-
-    return pd.DataFrame(data_rows)
 
 
 def get_quarter_data(df, year, quarter):
@@ -183,7 +154,6 @@ def create_timeseries_chart(df, metrics, title, selected_year, selected_quarter)
                 marker=dict(size=6)
             ))
 
-    # Find the index of the selected quarter for the vertical line
     selected_label = f"{selected_year} Q{selected_quarter}"
     if selected_label in x_labels:
         selected_idx = x_labels.index(selected_label)
@@ -311,28 +281,24 @@ def create_summary_html(stats):
 
 # Global data storage
 GLOBAL_DF = None
+CURRENT_RSSD = None
 
 
-def get_data():
-    """Get or load the global dataframe."""
-    global GLOBAL_DF
-    if GLOBAL_DF is None:
-        try:
-            GLOBAL_DF = load_financial_data()
-            if len(GLOBAL_DF) == 0:
-                raise ValueError("No data in database")
-            unique_quarters = GLOBAL_DF.groupby(["year", "quarter"]).size().reset_index()
-            if len(unique_quarters) <= 1:
-                GLOBAL_DF = generate_sample_historical_data()
-        except Exception as e:
-            print(f"Using sample data: {e}")
-            GLOBAL_DF = generate_sample_historical_data()
+def get_data(rssd_id=None):
+    """Get or load the dataframe from database for a specific institution."""
+    global GLOBAL_DF, CURRENT_RSSD
+    if GLOBAL_DF is None or CURRENT_RSSD != rssd_id:
+        CURRENT_RSSD = rssd_id
+        GLOBAL_DF = load_financial_data(rssd_id)
+        if len(GLOBAL_DF) == 0:
+            raise ValueError("No data in database. Run 'python -m src.y9c.cli --init' to download and load data.")
     return GLOBAL_DF
 
 
-def update_dashboard(selected_quarter_str):
-    """Update all dashboard components based on selected quarter."""
-    df = get_data()
+def update_dashboard(institution_str, selected_quarter_str):
+    """Update all dashboard components based on selected institution and quarter."""
+    rssd_id = institution_str.split(" - ")[0] if institution_str else None
+    df = get_data(rssd_id)
 
     parts = selected_quarter_str.split()
     selected_year = int(parts[0])
@@ -389,25 +355,41 @@ def update_dashboard(selected_quarter_str):
 
 def create_dashboard():
     """Create the Gradio dashboard interface."""
-    df = get_data()
+    institutions_df = get_available_institutions()
+    if len(institutions_df) == 0:
+        raise ValueError("No data in database. Run 'python -m src.y9c.cli --init' to download and load data.")
+
+    institution_choices = [
+        f"{row['rssd_id']} - {row['name'] or 'Unknown'}"
+        for _, row in institutions_df.iterrows()
+    ]
+    default_institution = institution_choices[0]
+    default_rssd = institutions_df.iloc[0]["rssd_id"]
+
+    df = get_data(default_rssd)
 
     quarters_df = df.groupby(["year", "quarter"]).size().reset_index()
     quarters_df = quarters_df.sort_values(["year", "quarter"], ascending=[False, False])
     quarter_choices = [f"{row['year']} Q{row['quarter']}" for _, row in quarters_df.iterrows()]
 
-    default_quarter = quarter_choices[0]
+    default_quarter = quarter_choices[0] if quarter_choices else "2024 Q4"
 
-    initial_outputs = update_dashboard(default_quarter)
+    initial_outputs = update_dashboard(default_institution, default_quarter)
 
-    with gr.Blocks(title="USAA Y-9C Dashboard") as demo:
+    with gr.Blocks(title="Bank Holding Company Y-9C Dashboard") as demo:
         gr.Markdown(
             """
-            # USAA Financial Dashboard
+            # Bank Holding Company Financial Dashboard
             ### FR Y-9C Regulatory Data Analysis
             """
         )
 
         with gr.Row():
+            institution_dropdown = gr.Dropdown(
+                choices=institution_choices,
+                value=default_institution,
+                label="Select Institution"
+            )
             quarter_dropdown = gr.Dropdown(
                 choices=quarter_choices,
                 value=default_quarter,
@@ -444,9 +426,14 @@ def create_dashboard():
             """
         )
 
+        institution_dropdown.change(
+            fn=update_dashboard,
+            inputs=[institution_dropdown, quarter_dropdown],
+            outputs=[summary_html, plot_balance, plot_income, plot_deposits, plot_expense, plot_yoy_balance, plot_yoy_income]
+        )
         quarter_dropdown.change(
             fn=update_dashboard,
-            inputs=[quarter_dropdown],
+            inputs=[institution_dropdown, quarter_dropdown],
             outputs=[summary_html, plot_balance, plot_income, plot_deposits, plot_expense, plot_yoy_balance, plot_yoy_income]
         )
 

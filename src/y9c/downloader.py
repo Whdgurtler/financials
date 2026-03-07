@@ -1,11 +1,12 @@
 """
-Y-9C Data Downloader
+Bank Holding Company Y-9C Data Downloader
 
-Downloads FR Y-9C bulk data files from the Federal Reserve / FFIEC.
+Downloads FR Y-9C bulk data files for all U.S. bank holding companies
+from Chicago Fed (historical) and FFIEC NIC (current).
 
-This script handles:
-1. Historical data from Chicago Fed (1986-2020)
-2. Current data from FFIEC NIC (2021+)
+Data Sources:
+- Chicago Fed (1986-2021 Q1): Direct CSV downloads, no authentication
+- FFIEC NIC (2021 Q2+): Requires Playwright with stealth for bot bypass
 """
 
 import requests
@@ -21,6 +22,7 @@ PROCESSED_DIR = Path(__file__).parent.parent.parent / "data" / "processed"
 MANUAL_DOWNLOAD_DIR = Path(__file__).parent.parent.parent / "data" / "manual_downloads"
 
 FFIEC_DOWNLOAD_URL = "https://www.ffiec.gov/npw/FinancialReport/FinancialDataDownload"
+FFIEC_BULK_ZIP_URL = "https://www.ffiec.gov/npw/FinancialReport/ReturnBHCFZipFiles?zipfilename=BHCF{date}.ZIP"
 
 
 def ensure_directories():
@@ -137,6 +139,56 @@ def download_nic_data_selenium(year, quarter):
         return None
 
 
+def download_nic_data_cloudscraper(year, quarter, date_str, output_file, max_retries=3):
+    """Download Y-9C bulk ZIP from FFIEC using cloudscraper to bypass WAF."""
+    try:
+        import cloudscraper
+    except ImportError:
+        print("  cloudscraper not installed. Run: pip install cloudscraper")
+        return None
+
+    zip_filename = f"BHCF{date_str}.ZIP"
+    url = FFIEC_BULK_ZIP_URL.format(date=date_str)
+
+    scraper = cloudscraper.create_scraper()
+
+    # Warm up session by visiting the page first (required for WAF cookie)
+    try:
+        warm_url = f"{FFIEC_DOWNLOAD_URL}?selectedyear={year}"
+        scraper.get(warm_url, timeout=30)
+    except Exception:
+        pass
+
+    for attempt in range(max_retries):
+        try:
+            print(f"  Downloading {zip_filename} from FFIEC (attempt {attempt + 1})...")
+            response = scraper.get(url, timeout=180, stream=True)
+
+            if response.status_code == 200:
+                content = b"".join(response.iter_content(chunk_size=1024 * 1024))
+                if content[:2] == b"PK":
+                    with open(output_file, "wb") as f:
+                        f.write(content)
+                    print(f"  Saved: {output_file.name} ({len(content) / 1e6:.1f} MB)")
+                    return output_file
+                else:
+                    print(f"  Response was not a ZIP file for {year} Q{quarter}")
+                    break
+            elif response.status_code == 404:
+                print(f"  Data not yet available for {year} Q{quarter}")
+                return None
+            else:
+                print(f"  HTTP {response.status_code} for {year} Q{quarter}")
+
+        except Exception as e:
+            print(f"  Error on attempt {attempt + 1}: {e}")
+
+        if attempt < max_retries - 1:
+            time.sleep(2 ** attempt)
+
+    return None
+
+
 def download_nic_data(year, quarter, max_retries=3):
     """Download Y-9C data from FFIEC NIC for a specific quarter."""
     date_str = get_quarter_dates(year, quarter)
@@ -150,61 +202,38 @@ def download_nic_data(year, quarter, max_retries=3):
     if manual_file:
         return manual_file
 
+    # Try cloudscraper against the real FFIEC bulk zip endpoint (bypasses WAF)
+    cloudscraper_result = download_nic_data_cloudscraper(year, quarter, date_str, output_file)
+    if cloudscraper_result:
+        return cloudscraper_result
+
+    # Fall back to Selenium if cloudscraper fails
     selenium_result = download_nic_data_selenium(year, quarter)
     if selenium_result:
         return selenium_result
 
-    url = f"https://www.ffiec.gov/npw/FinancialReport/ReturnFinancialReportZip?rpt=BHCF&date={date_str}"
-
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Accept": "application/zip, application/octet-stream, */*",
-    }
-
-    for attempt in range(max_retries):
-        try:
-            print(f"  Trying direct download {year} Q{quarter} (attempt {attempt + 1})...")
-            response = requests.get(url, headers=headers, timeout=120)
-
-            if response.status_code == 200:
-                if response.content[:2] == b'PK':
-                    with open(output_file, 'wb') as f:
-                        f.write(response.content)
-                    print(f"  Saved: {output_file.name}")
-                    return output_file
-                else:
-                    break
-            elif response.status_code == 404:
-                print(f"  Data not available for {year} Q{quarter}")
-                return None
-            elif response.status_code == 403:
-                break
-
-        except requests.exceptions.Timeout:
-            print(f"  Timeout on attempt {attempt + 1}")
-        except requests.exceptions.RequestException as e:
-            print(f"  Error on attempt {attempt + 1}: {e}")
-
-        if attempt < max_retries - 1:
-            time.sleep(2 ** attempt)
-
     print(f"\n  ** Manual download required for {year} Q{quarter} **")
-    print(f"  1. Go to: {FFIEC_DOWNLOAD_URL}")
-    print(f"  2. Select: Report Type = BHCF")
-    print(f"  3. Select: Year = {year}")
-    print(f"  4. Select: Quarter = {quarter}")
-    print(f"  5. Click Download")
-    print(f"  6. Save file to: {MANUAL_DOWNLOAD_DIR}")
-    print(f"  7. Re-run this script\n")
+    print(f"  1. Go to: {FFIEC_DOWNLOAD_URL}?selectedyear={year}")
+    print(f"  2. Click the {year} Q{quarter} ZIP button")
+    print(f"  3. Save file to: {MANUAL_DOWNLOAD_DIR}")
+    print(f"  4. Re-run this script\n")
 
     return None
 
 
 def download_chicago_fed_data(year, quarter, max_retries=3):
-    """Download historical Y-9C data from Chicago Fed (pre-2021)."""
-    url = f"https://www.chicagofed.org/api/sitecore/BHCHome/BHCDownload?SelectedQuarter={quarter}&SelectedYear={year}"
+    """Download historical Y-9C data from Chicago Fed (1986-2021 Q1).
 
-    output_file = DATA_DIR / f"BHCF_{year}Q{quarter}_chicago.zip"
+    Uses direct static file URLs: bhcf{YY}{MM}.csv
+    These bypass the API endpoint which is now blocked.
+    """
+    yy = str(year)[-2:].zfill(2)
+    month_map = {1: "03", 2: "06", 3: "09", 4: "12"}
+    mm = month_map[quarter]
+    fname = f"bhcf{yy}{mm}.csv"
+    url = f"https://www.chicagofed.org/~/media/others/banking/financial-institution-reports/bhc-data/{fname}"
+
+    output_file = DATA_DIR / f"BHCF_{year}Q{quarter}_chicago.csv"
 
     if output_file.exists():
         print(f"  File already exists: {output_file.name}")
@@ -212,21 +241,21 @@ def download_chicago_fed_data(year, quarter, max_retries=3):
 
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Accept": "*/*",
+        "Referer": "https://www.chicagofed.org/banking/financial-institution-reports/bhc-data",
     }
 
     for attempt in range(max_retries):
         try:
-            print(f"  Downloading {year} Q{quarter} from Chicago Fed...")
+            print(f"  Downloading {fname} from Chicago Fed...")
             response = requests.get(url, headers=headers, timeout=120, allow_redirects=True)
 
-            if response.status_code == 200 and len(response.content) > 1000:
-                with open(output_file, 'wb') as f:
+            if response.status_code == 200 and len(response.content) > 10000:
+                with open(output_file, "wb") as f:
                     f.write(response.content)
-                print(f"  Saved: {output_file.name}")
+                print(f"  Saved: {output_file.name} ({len(response.content)/1e6:.1f} MB)")
                 return output_file
             elif response.status_code == 404:
-                print(f"  Data not available for {year} Q{quarter}")
+                print(f"  Not available on Chicago Fed for {year} Q{quarter}")
                 return None
             else:
                 print(f"  HTTP {response.status_code} (size: {len(response.content)}) for {year} Q{quarter}")
@@ -296,7 +325,8 @@ def download_all_y9c_data(start_year=2000, end_year=None):
             max_quarter = current_quarter
 
         for quarter in range(1, max_quarter + 1):
-            if year < 2021:
+            # Chicago Fed has data through 2021 Q1; FFIEC covers 2021 Q2+
+            if year < 2021 or (year == 2021 and quarter == 1):
                 zip_path = download_chicago_fed_data(year, quarter)
                 if not zip_path:
                     zip_path = download_nic_data(year, quarter)

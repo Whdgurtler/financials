@@ -1,15 +1,14 @@
 """
-USAA Y-9C Financial Dashboard
-Gradio interface for viewing quarterly financial data with Y-o-Y comparisons
+Bank Holding Company Y-9C Financial Dashboard
+Gradio interface for viewing quarterly financial data with Y-o-Y comparisons.
+Supports all major U.S. bank holding companies.
 """
 
 import gradio as gr
 import pandas as pd
 import sqlite3
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 from pathlib import Path
-import numpy as np
 
 # Database path
 DB_PATH = Path(__file__).parent / "data" / "usaa_y9c.db"
@@ -20,80 +19,54 @@ def get_db_connection():
     return sqlite3.connect(DB_PATH)
 
 
-def load_financial_data():
-    """Load all financial data from database."""
+def load_financial_data(rssd_id=None):
+    """Load financial data from database for a specific institution."""
     conn = get_db_connection()
-    query = """
-        SELECT fd.report_date, fd.year, fd.quarter, fd.mdrm_code, fd.value,
-               ad.account_name, ad.statement_type, ad.category
-        FROM financial_data fd
-        JOIN account_definitions ad ON fd.mdrm_code = ad.mdrm_code
-        ORDER BY fd.year, fd.quarter
-    """
-    df = pd.read_sql_query(query, conn)
+    if rssd_id:
+        query = """
+            SELECT fd.report_date, fd.year, fd.quarter, fd.mdrm_code, fd.value,
+                   ad.account_name, ad.statement_type, ad.category
+            FROM financial_data fd
+            JOIN account_definitions ad ON fd.mdrm_code = ad.mdrm_code
+            WHERE fd.rssd_id = ?
+            ORDER BY fd.year, fd.quarter
+        """
+        df = pd.read_sql_query(query, conn, params=[rssd_id])
+    else:
+        query = """
+            SELECT fd.report_date, fd.year, fd.quarter, fd.mdrm_code, fd.value,
+                   ad.account_name, ad.statement_type, ad.category
+            FROM financial_data fd
+            JOIN account_definitions ad ON fd.mdrm_code = ad.mdrm_code
+            ORDER BY fd.year, fd.quarter
+        """
+        df = pd.read_sql_query(query, conn)
     conn.close()
     return df
 
 
-def generate_sample_historical_data():
-    """Generate sample historical data for demonstration purposes."""
-    # Key metrics and their base values in THOUSANDS (realistic for USAA ~$200B holding company)
-    metrics = {
-        "BHCK2170": {"name": "Total Assets", "base": 200000000, "statement": "balance_sheet", "category": "assets"},  # $200B
-        "BHCK2948": {"name": "Total Liabilities", "base": 165000000, "statement": "balance_sheet", "category": "liabilities"},  # $165B
-        "BHCK3210": {"name": "Total Equity", "base": 35000000, "statement": "balance_sheet", "category": "equity"},  # $35B
-        "BHCKB528": {"name": "Net Loans", "base": 95000000, "statement": "balance_sheet", "category": "assets"},  # $95B
-        "BHDM6636": {"name": "Interest-bearing Deposits", "base": 120000000, "statement": "balance_sheet", "category": "liabilities"},  # $120B
-        "BHCK4010": {"name": "Total Interest Income", "base": 8500000, "statement": "income_statement", "category": "interest_income"},  # $8.5B
-        "BHCK4073": {"name": "Total Interest Expense", "base": 2800000, "statement": "income_statement", "category": "interest_expense"},  # $2.8B
-        "BHCK4074": {"name": "Net Interest Income", "base": 5700000, "statement": "income_statement", "category": "net_interest_income"},  # $5.7B
-        "BHCK4079": {"name": "Total Noninterest Income", "base": 12000000, "statement": "income_statement", "category": "noninterest_income"},  # $12B (insurance)
-        "BHCK4093": {"name": "Total Noninterest Expense", "base": 13500000, "statement": "income_statement", "category": "noninterest_expense"},  # $13.5B
-        "BHCK4340": {"name": "Net Income", "base": 4000000, "statement": "income_statement", "category": "income"},  # $4B
-        "BHCK4230": {"name": "Provision for Loan Losses", "base": 800000, "statement": "income_statement", "category": "provision"},  # $800M
-    }
-
-    # Generate 20 quarters of historical data (2021 Q1 to 2025 Q4)
-    quarters = []
-    for year in [2021, 2022, 2023, 2024, 2025]:
-        for q in [1, 2, 3, 4]:
-            quarter_end = {1: "03-31", 2: "06-30", 3: "09-30", 4: "12-31"}[q]
-            quarters.append({
-                "year": year,
-                "quarter": q,
-                "report_date": f"{year}-{quarter_end}"
-            })
-
-    data_rows = []
-    np.random.seed(42)  # Reproducible randomness
-
-    total_quarters = len(quarters)
-    for metric, info in metrics.items():
-        for i, qtr in enumerate(quarters):
-            # Create growth trend with some seasonal variation
-            quarter_idx = i
-            trend = 1 + (0.02 * quarter_idx)  # ~2% quarterly growth
-            seasonal = 1 + 0.03 * np.sin(2 * np.pi * qtr["quarter"] / 4)  # Seasonal variation
-            noise = 1 + np.random.normal(0, 0.02)  # Random noise
-
-            # Expense items grow differently
-            if "expense" in info["category"].lower() or "provision" in info["category"].lower():
-                trend = 1 + (0.015 * quarter_idx)  # Slightly slower growth
-
-            value = info["base"] * trend * seasonal * noise / (1 + 0.02 * (total_quarters - 1))  # Normalize so last quarter matches base
-
-            data_rows.append({
-                "report_date": qtr["report_date"],
-                "year": qtr["year"],
-                "quarter": qtr["quarter"],
-                "mdrm_code": metric,
-                "account_name": info["name"],
-                "statement_type": info["statement"],
-                "category": info["category"],
-                "value": value
-            })
-
-    return pd.DataFrame(data_rows)
+def get_available_institutions():
+    """Get list of institutions available in the database, sorted by latest quarter total assets."""
+    try:
+        conn = get_db_connection()
+        query = """
+            SELECT fd.rssd_id, i.name, fd.value as total_assets
+            FROM financial_data fd
+            LEFT JOIN institutions i ON fd.rssd_id = i.rssd_id
+            WHERE fd.mdrm_code = 'BHCK2170'
+              AND fd.year = (SELECT MAX(year) FROM financial_data)
+              AND fd.quarter = (
+                  SELECT quarter FROM financial_data
+                  WHERE year = (SELECT MAX(year) FROM financial_data)
+                  ORDER BY quarter DESC LIMIT 1
+              )
+            ORDER BY fd.value DESC
+        """
+        df = pd.read_sql_query(query, conn)
+        conn.close()
+        return df
+    except Exception:
+        return pd.DataFrame(columns=["rssd_id", "name", "total_assets"])
 
 
 def get_quarter_data(df, year, quarter):
@@ -319,28 +292,25 @@ def create_summary_html(stats):
 
 # Global data storage
 GLOBAL_DF = None
+CURRENT_RSSD = None
+NAME_TO_RSSD = {}
 
 
-def get_data():
-    """Get or load the global dataframe."""
-    global GLOBAL_DF
-    if GLOBAL_DF is None:
-        try:
-            GLOBAL_DF = load_financial_data()
-            if len(GLOBAL_DF) == 0:
-                raise ValueError("No data in database")
-            unique_quarters = GLOBAL_DF.groupby(["year", "quarter"]).size().reset_index()
-            if len(unique_quarters) <= 1:
-                GLOBAL_DF = generate_sample_historical_data()
-        except Exception as e:
-            print(f"Using sample data: {e}")
-            GLOBAL_DF = generate_sample_historical_data()
+def get_data(rssd_id=None):
+    """Get or load the dataframe from database for a specific institution."""
+    global GLOBAL_DF, CURRENT_RSSD
+    if GLOBAL_DF is None or CURRENT_RSSD != rssd_id:
+        CURRENT_RSSD = rssd_id
+        GLOBAL_DF = load_financial_data(rssd_id)
+        if len(GLOBAL_DF) == 0:
+            raise ValueError("No data in database. Run 'python -m src.y9c.cli --init' to download and load data.")
     return GLOBAL_DF
 
 
-def update_dashboard(selected_quarter_str):
-    """Update all dashboard components based on selected quarter."""
-    df = get_data()
+def update_dashboard(institution_str, selected_quarter_str):
+    """Update all dashboard components based on selected institution and quarter."""
+    rssd_id = NAME_TO_RSSD.get(institution_str, institution_str) if institution_str else None
+    df = get_data(rssd_id)
 
     # Parse selected quarter (e.g., "2025 Q4")
     parts = selected_quarter_str.split()
@@ -400,31 +370,50 @@ def update_dashboard(selected_quarter_str):
 
 def create_dashboard():
     """Create the Gradio dashboard interface."""
-    # Load data
-    df = get_data()
+    # Get available institutions
+    institutions_df = get_available_institutions()
+    if len(institutions_df) == 0:
+        raise ValueError("No data in database. Run 'python -m src.y9c.cli --init' to download and load data.")
+
+    global NAME_TO_RSSD
+    NAME_TO_RSSD = {
+        (row['name'] or row['rssd_id']): row['rssd_id']
+        for _, row in institutions_df.iterrows()
+    }
+    institution_choices = list(NAME_TO_RSSD.keys())
+    default_institution = institution_choices[0]
+    default_rssd = institutions_df.iloc[0]["rssd_id"]
+
+    # Load data for default institution
+    df = get_data(default_rssd)
 
     # Get available quarters
     quarters_df = df.groupby(["year", "quarter"]).size().reset_index()
     quarters_df = quarters_df.sort_values(["year", "quarter"], ascending=[False, False])
     quarter_choices = [f"{row['year']} Q{row['quarter']}" for _, row in quarters_df.iterrows()]
 
-    # Default to latest quarter (2025 Q4)
-    default_quarter = quarter_choices[0]  # Should be "2025 Q4"
+    # Default to latest quarter
+    default_quarter = quarter_choices[0] if quarter_choices else "2024 Q4"
 
     # Get initial values
-    initial_outputs = update_dashboard(default_quarter)
+    initial_outputs = update_dashboard(default_institution, default_quarter)
 
     # Build the interface
-    with gr.Blocks(title="USAA Y-9C Dashboard") as demo:
+    with gr.Blocks(title="Bank Holding Company Y-9C Dashboard") as demo:
         gr.Markdown(
             """
-            # USAA Financial Dashboard
+            # Bank Holding Company Financial Dashboard
             ### FR Y-9C Regulatory Data Analysis
             """
         )
 
-        # Quarter selector
+        # Institution and Quarter selectors
         with gr.Row():
+            institution_dropdown = gr.Dropdown(
+                choices=institution_choices,
+                value=default_institution,
+                label="Select Institution"
+            )
             quarter_dropdown = gr.Dropdown(
                 choices=quarter_choices,
                 value=default_quarter,
@@ -463,10 +452,15 @@ def create_dashboard():
             """
         )
 
-        # Connect dropdown to update function
+        # Connect dropdowns to update function
+        institution_dropdown.change(
+            fn=update_dashboard,
+            inputs=[institution_dropdown, quarter_dropdown],
+            outputs=[summary_html, plot_balance, plot_income, plot_deposits, plot_expense, plot_yoy_balance, plot_yoy_income]
+        )
         quarter_dropdown.change(
             fn=update_dashboard,
-            inputs=[quarter_dropdown],
+            inputs=[institution_dropdown, quarter_dropdown],
             outputs=[summary_html, plot_balance, plot_income, plot_deposits, plot_expense, plot_yoy_balance, plot_yoy_income]
         )
 

@@ -1,12 +1,13 @@
 """
 Y-9C Database Module
 
-Creates and manages a SQLite database for storing Y-9C regulatory data.
+Creates and manages a SQLite database for storing FR Y-9C regulatory data
+for all U.S. bank holding companies.
 
 Database Schema:
 - institutions: Institution identifiers and metadata
 - account_definitions: MDRM codes and their descriptions
-- financial_data: Actual financial data values
+- financial_data: Actual financial data values (~4M records)
 - load_history: Track data loads for incremental updates
 """
 
@@ -373,10 +374,11 @@ def export_to_csv(rssd_id, output_path, statement_type=None):
 
 
 def initialize_database():
-    """Initialize the database with schema and USAA institution data."""
+    """Initialize the database with schema and account definitions."""
     create_schema()
     populate_account_definitions()
 
+    # Add USAA as a default institution (others are added when data is loaded)
     add_institution(
         rssd_id=USAA_HOLDING_COMPANY_RSSD,
         name="United Services Automobile Association",

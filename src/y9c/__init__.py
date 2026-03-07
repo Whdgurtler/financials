@@ -1,8 +1,8 @@
 """
-USAA Y-9C Financial Data Scraper
+Bank Holding Company Y-9C Financial Data Scraper
 
 A package for downloading, processing, and analyzing FR Y-9C regulatory filings
-for bank holding companies.
+for all U.S. bank holding companies.
 """
 
 from .config import (
