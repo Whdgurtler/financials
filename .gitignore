@@ -49,3 +49,7 @@ nul
 
 # Logs
 *.log
+
+# Environment / secrets
+.env
+.env.*
