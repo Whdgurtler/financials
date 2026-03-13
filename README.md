@@ -1,3 +1,14 @@
+---
+title: BHC Y-9C Financial Dashboard
+emoji: 🏦
+colorFrom: blue
+colorTo: indigo
+sdk: gradio
+sdk_version: 5.0.0
+app_file: gradio_dashboard.py
+pinned: false
+---
+
 # Bank Holding Company Y-9C Financial Data Scraper
 
 A Python tool for downloading, processing, and analyzing FR Y-9C regulatory filings for all U.S. bank holding companies.

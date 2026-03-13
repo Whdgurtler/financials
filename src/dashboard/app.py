@@ -108,7 +108,7 @@ def create_summary_stats(df, selected_year, selected_quarter):
         ("BHCK3210", "Total Equity"),
         ("BHCKB528", "Net Loans"),
         ("BHCK4074", "Net Interest Income"),
-        ("BHCK4340", "Net Income"),
+        ("BHCK4301", "Net Income"),
         ("BHCK4079", "Noninterest Income"),
     ]
 
@@ -317,7 +317,7 @@ def update_dashboard(institution_str, selected_quarter_str):
     income_metrics = [
         ("BHCK4074", "Net Interest Income"),
         ("BHCK4079", "Noninterest Income"),
-        ("BHCK4340", "Net Income"),
+        ("BHCK4301", "Net Income"),
     ]
     fig_income = create_timeseries_chart(df, income_metrics, "Income Statement Trends", selected_year, selected_quarter)
 
@@ -346,7 +346,7 @@ def update_dashboard(institution_str, selected_quarter_str):
         ("BHCK4074", "Net Interest Income"),
         ("BHCK4079", "Noninterest Income"),
         ("BHCK4093", "Noninterest Expense"),
-        ("BHCK4340", "Net Income"),
+        ("BHCK4301", "Net Income"),
     ]
     fig_yoy_income = create_bar_chart_yoy(df, yoy_income, "Income Statement Y-o-Y Comparison", selected_year, selected_quarter)
 

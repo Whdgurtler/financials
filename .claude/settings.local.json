@@ -10,7 +10,29 @@
       "Bash(git push:*)",
       "Bash(git remote:*)",
       "Bash(git commit -m \"$\\(cat <<''EOF''\nReorganize codebase into proper package structure\n\n- Move core modules to src/y9c/ package \\(config, database, loader, downloader, cli\\)\n- Create src/dashboard/ package for Gradio visualization\n- Add comprehensive README.md with usage instructions\n- Update requirements.txt with all dependencies\n- Update .gitignore to exclude large data files\n- Remove duplicate root-level files\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
-      "Bash(unzip:*)"
+      "Bash(unzip:*)",
+      "Bash(ls -lh /c/Users/whdgu/usaa_y9c_scraper/data/*.db)",
+      "Bash(grep -E \"^/c/Users/whdgu/usaa_y9c_scraper/[^/]+\\\\.py$|^/c/Users/whdgu/usaa_y9c_scraper/src\")",
+      "Bash(huggingface-cli whoami:*)",
+      "Bash(wsl --list --verbose)",
+      "Bash(wsl -d Ubuntu-24.04 bash -c \"which airflow; airflow version; echo HOME=$HOME; ls ~/airflow 2>/dev/null || echo no airflow dir\")",
+      "Bash(wsl -d Ubuntu-24.04 bash -c \"find / -name ''airflow'' -type f 2>/dev/null | grep -v proc | head -5; pip show apache-airflow 2>/dev/null | head -5\")",
+      "Bash(wsl -d Ubuntu-24.04 bash -c \"pip show apache-airflow 2>/dev/null | head -5\")",
+      "Bash(wsl -d Ubuntu-24.04 bash -c \"pip3 show apache-airflow 2>&1 | head -10; which airflow 2>&1; ls ~/airflow/\")",
+      "Bash(wsl -d Ubuntu-24.04 bash -c \"find /usr /home /root /opt ~/.local 2>/dev/null -name ''airflow'' -not -path ''*/airflow/airflow'' 2>/dev/null | head -10\")",
+      "Bash(wsl -d Ubuntu-24.04 bash -c \"/opt/airflow-venv/bin/airflow version; ls /opt/airflow/dags 2>/dev/null || echo no dags dir; cat /opt/airflow/airflow.cfg 2>/dev/null | grep -E ''^dags_folder|^base_url|^executor''\")",
+      "Bash(wsl -d Ubuntu-24.04 bash -c \"ls /mnt/c/Users/whdgu/OneDrive/Desktop/job_search_local/dags 2>/dev/null || echo ''no dags dir''; ls /mnt/c/Users/whdgu/usaa_y9c_scraper/ | head -10\")",
+      "Bash(wsl -d Ubuntu-24.04 bash -c \"ls /mnt/c/Users/whdgu/usaa_y9c_scraper/.venv 2>/dev/null || find /mnt/c/Users/whdgu/usaa_y9c_scraper -maxdepth 2 -name ''python'' 2>/dev/null | head -5; which python3\")",
+      "Bash(wsl -d Ubuntu-24.04 bash -c \"find /mnt/c/Users/whdgu/usaa_y9c_scraper -maxdepth 3 -name ''python.exe'' -o -name ''python'' 2>/dev/null | head -5; ls /mnt/c/Users/whdgu/usaa_y9c_scraper/.venv/Scripts/ 2>/dev/null || ls /mnt/c/Users/whdgu/usaa_y9c_scraper/.venv/bin/ 2>/dev/null\")",
+      "Bash(wsl -d Ubuntu-24.04 bash -c \"pgrep -a airflow 2>/dev/null || echo ''airflow not running''\")",
+      "Bash(wsl -d Ubuntu-24.04 bash -c \"ls /mnt/c/Users/whdgu/OneDrive/Desktop/jobsearch_loacal_imp/dags/ 2>/dev/null\")",
+      "Bash(wsl -d Ubuntu-24.04 bash -c \"systemctl --user list-units 2>/dev/null | grep -i airflow; cat /etc/systemd/system/airflow*.service 2>/dev/null; cat /root/.config/systemd/user/airflow*.service 2>/dev/null\")",
+      "Bash(wsl -d Ubuntu-24.04 bash -c \"cat /etc/rc.local 2>/dev/null; cat /root/.profile 2>/dev/null | tail -20; cat /root/.bashrc 2>/dev/null | tail -20\")",
+      "Bash(wsl -d Ubuntu-24.04 bash -c \"cat /etc/wsl.conf 2>/dev/null; ls /etc/systemd/system/ | grep -i airflow; systemctl is-enabled airflow-scheduler airflow-webserver 2>/dev/null\")",
+      "Bash(wsl -d:*)"
+    ],
+    "additionalDirectories": [
+      "C:\\Users\\whdgu\\OneDrive\\Desktop\\jobsearch_loacal_imp\\dags"
     ]
   }
 }

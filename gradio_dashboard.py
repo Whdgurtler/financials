@@ -6,66 +6,46 @@ Supports all major U.S. bank holding companies.
 
 import gradio as gr
 import pandas as pd
-import sqlite3
 import plotly.graph_objects as go
 from pathlib import Path
 from src.y9c.fred_data import load_fred_data, FRED_SERIES_NAMES, get_unit
 
-# Database path
-DB_PATH = Path(__file__).parent / "data" / "usaa_y9c.db"
+HF_REPO = "Wgurtler/y9c-data"
+_FINANCIAL_DF: pd.DataFrame | None = None
+_INSTITUTIONS_DF: pd.DataFrame | None = None
 
 
-def get_db_connection():
-    """Get database connection."""
-    return sqlite3.connect(DB_PATH)
+def _load_hf_data():
+    global _FINANCIAL_DF, _INSTITUTIONS_DF
+    if _FINANCIAL_DF is None:
+        print("Loading data from Hugging Face...")
+        _FINANCIAL_DF = pd.read_parquet(f"hf://datasets/{HF_REPO}/financial_data.parquet")
+        _INSTITUTIONS_DF = pd.read_parquet(f"hf://datasets/{HF_REPO}/institutions.parquet")
+        print(f"Loaded {len(_FINANCIAL_DF):,} rows")
 
 
 def load_financial_data(rssd_id=None):
-    """Load financial data from database for a specific institution."""
-    conn = get_db_connection()
+    """Load financial data for a specific institution."""
+    _load_hf_data()
+    df = _FINANCIAL_DF
     if rssd_id:
-        query = """
-            SELECT fd.report_date, fd.year, fd.quarter, fd.mdrm_code, fd.value,
-                   ad.account_name, ad.statement_type, ad.category
-            FROM financial_data fd
-            JOIN account_definitions ad ON fd.mdrm_code = ad.mdrm_code
-            WHERE fd.rssd_id = ?
-            ORDER BY fd.year, fd.quarter
-        """
-        df = pd.read_sql_query(query, conn, params=[rssd_id])
-    else:
-        query = """
-            SELECT fd.report_date, fd.year, fd.quarter, fd.mdrm_code, fd.value,
-                   ad.account_name, ad.statement_type, ad.category
-            FROM financial_data fd
-            JOIN account_definitions ad ON fd.mdrm_code = ad.mdrm_code
-            ORDER BY fd.year, fd.quarter
-        """
-        df = pd.read_sql_query(query, conn)
-    conn.close()
-    return df
+        df = df[df["rssd_id"] == rssd_id]
+    return df[["report_date", "year", "quarter", "mdrm_code", "value",
+               "account_name", "statement_type", "category"]].sort_values(["year", "quarter"])
 
 
 def get_available_institutions():
-    """Get list of institutions available in the database, sorted by latest quarter total assets."""
+    """Get list of institutions sorted by latest quarter total assets."""
     try:
-        conn = get_db_connection()
-        query = """
-            SELECT fd.rssd_id, i.name, fd.value as total_assets
-            FROM financial_data fd
-            LEFT JOIN institutions i ON fd.rssd_id = i.rssd_id
-            WHERE fd.mdrm_code = 'BHCK2170'
-              AND fd.year = (SELECT MAX(year) FROM financial_data)
-              AND fd.quarter = (
-                  SELECT quarter FROM financial_data
-                  WHERE year = (SELECT MAX(year) FROM financial_data)
-                  ORDER BY quarter DESC LIMIT 1
-              )
-            ORDER BY fd.value DESC
-        """
-        df = pd.read_sql_query(query, conn)
-        conn.close()
-        return df
+        _load_hf_data()
+        fin = _FINANCIAL_DF
+        assets = fin[fin["mdrm_code"] == "BHCK2170"]
+        max_year = assets["year"].max()
+        max_quarter = assets[assets["year"] == max_year]["quarter"].max()
+        latest = assets[(assets["year"] == max_year) & (assets["quarter"] == max_quarter)]
+        result = latest[["rssd_id", "value"]].rename(columns={"value": "total_assets"})
+        result = result.merge(_INSTITUTIONS_DF[["rssd_id", "name"]], on="rssd_id", how="left")
+        return result[["rssd_id", "name", "total_assets"]].sort_values("total_assets", ascending=False)
     except Exception:
         return pd.DataFrame(columns=["rssd_id", "name", "total_assets"])
 
@@ -116,7 +96,7 @@ def create_summary_stats(df, selected_year, selected_quarter):
         ("BHCK3210", "Total Equity"),
         ("BHCKB528", "Net Loans"),
         ("BHCK4074", "Net Interest Income"),
-        ("BHCK4340", "Net Income"),
+        ("BHCK4301", "Net Income"),
         ("BHCK4079", "Noninterest Income"),
     ]
 
@@ -319,7 +299,7 @@ METRIC_CHOICES = [
     ("Total Noninterest Income", "BHCK4079"),
     ("Total Noninterest Expense", "BHCK4093"),
     ("Salaries & Benefits", "BHCK4135"),
-    ("Net Income", "BHCK4340"),
+    ("Net Income", "BHCK4301"),
     ("Income Before Taxes", "BHCK4301"),
     ("Applicable Income Taxes", "BHCK4302"),
     # Sub-items
@@ -493,7 +473,7 @@ def update_dashboard(institution_str, selected_quarter_str, years_back_str="3",
     income_metrics = [
         ("BHCK4074", "Net Interest Income"),
         ("BHCK4079", "Noninterest Income"),
-        ("BHCK4340", "Net Income"),
+        ("BHCK4301", "Net Income"),
     ]
     fig_income = create_timeseries_chart(df, income_metrics, "Income Statement Trends", selected_year, selected_quarter, start_year)
 
@@ -522,7 +502,7 @@ def update_dashboard(institution_str, selected_quarter_str, years_back_str="3",
         ("BHCK4074", "Net Interest Income"),
         ("BHCK4079", "Noninterest Income"),
         ("BHCK4093", "Noninterest Expense"),
-        ("BHCK4340", "Net Income"),
+        ("BHCK4301", "Net Income"),
     ]
     fig_yoy_income = create_bar_chart_yoy(df, yoy_income, "Income Statement Y-o-Y Comparison", selected_year, selected_quarter)
 
