@@ -1032,13 +1032,23 @@ with tab_fred:
                 line=dict(color="#ef4444", width=2, dash="dot"),
             ))
 
+        ov_layout = {**PLOTLY_BASE, "height": 440, "hovermode": "x unified"}
+        ov_layout["yaxis"] = dict(
+            title=f"{overlay_bank} ($ Billions)",
+            color="#3b82f6",
+            showgrid=True,
+            gridcolor="#1e293b",
+        )
+        ov_layout["yaxis2"] = dict(
+            title=overlay_fred_key,
+            overlaying="y",
+            side="right",
+            color="#ef4444",
+            showgrid=False,
+        )
         fig_ov.update_layout(
             title=dict(text=f"{overlay_bank}  vs  {overlay_fred_key}", font=dict(size=14)),
-            yaxis=dict(title=f"{overlay_bank} ($ Billions)", color="#3b82f6",
-                       showgrid=True, gridcolor="#1e293b"),
-            yaxis2=dict(title=overlay_fred_key, overlaying="y", side="right",
-                        color="#ef4444", showgrid=False),
-            **{**PLOTLY_BASE, "height": 440, "hovermode": "x unified"},
+            **ov_layout,
         )
         st.plotly_chart(fig_ov, use_container_width=True)
 
