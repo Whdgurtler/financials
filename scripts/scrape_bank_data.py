@@ -36,6 +36,9 @@ FIELD_MAP = {
     "NONII": ("BHCK4079", "Total noninterest income", "income_statement", "noninterest_income"),
     "NONIX": ("BHCK4093", "Total noninterest expense", "income_statement", "noninterest_expense"),
     "NETINC": ("BHCK4301", "Income before income taxes and extraordinary items", "income_statement", "income"),
+    "RBC1AAJ": ("FDIC_RBC1AAJ", "Tier 1 risk-based capital ratio (%)", "capital", "capital_ratio"),
+    "RBCRWAJ": ("FDIC_RBCRWAJ", "Total risk-based capital ratio (%)", "capital", "capital_ratio"),
+    "IDT1CER": ("FDIC_IDT1CER", "Tier 1 capital ratio (%)", "capital", "capital_ratio"),
 }
 
 

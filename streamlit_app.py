@@ -122,6 +122,27 @@ KEY_METRICS = [
     ("BHCK4079", "Noninterest Income"),
 ]
 
+CALL_REPORT_METRICS: list[tuple[str, str]] = [
+    ("Total Assets", "BHCK2170"),
+    ("Total Liabilities", "BHCK2948"),
+    ("Total Equity", "BHCK3210"),
+    ("Net Loans & Leases", "BHCKB528"),
+    ("Interest-Bearing Deposits", "BHDM6636"),
+    ("Total Interest Income", "BHCK4010"),
+    ("Total Interest Expense", "BHCK4073"),
+    ("Total Noninterest Income", "BHCK4079"),
+    ("Total Noninterest Expense", "BHCK4093"),
+    ("Net Income", "BHCK4301"),
+]
+
+CALL_REPORT_CAPITAL_METRICS: list[tuple[str, str]] = [
+    ("Tier 1 Risk-Based Capital Ratio", "FDIC_RBC1AAJ"),
+    ("Total Risk-Based Capital Ratio", "FDIC_RBCRWAJ"),
+    ("Tier 1 Capital Ratio", "FDIC_IDT1CER"),
+]
+
+CALL_REPORT_NAME_TO_MDRM: dict[str, str] = {n: m for n, m in CALL_REPORT_METRICS}
+
 CLUSTER_FEATURE_DEFAULTS = [
     "Total Assets", "Net Loans & Leases", "Total Equity",
     "Net Interest Income", "Total Noninterest Income", "Net Income",
@@ -524,8 +545,9 @@ st.markdown(f"""
 # ─────────────────────────────────────────────────────────────────────────────
 # Main tabs
 # ─────────────────────────────────────────────────────────────────────────────
-tab_overview, tab_cluster, tab_custom, tab_fred, tab_models, tab_monitoring, tab_tables = st.tabs([
+tab_overview, tab_call_report, tab_cluster, tab_custom, tab_fred, tab_models, tab_monitoring, tab_tables = st.tabs([
     "📊 Overview",
+    "🏛 Call Report",
     "🔬 Cluster Analysis",
     "📈 Custom Charts",
     "🌐 Economic Context",
@@ -608,7 +630,125 @@ with tab_overview:
         )
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TAB 2 — CLUSTER ANALYSIS
+# TAB 2 — CALL REPORT
+# ══════════════════════════════════════════════════════════════════════════════
+with tab_call_report:
+    st.markdown('<div class="sec-header">Call Report Analytics</div>', unsafe_allow_html=True)
+
+    if st.session_state.reporting_scope != "Bank (Call Report)":
+        st.info("Switch Reporting scope to Bank (Call Report) to use this tab.")
+    else:
+        def _point_value(code: str, year: int, quarter: int) -> float | None:
+            s = df[(df["year"] == year) & (df["quarter"] == quarter) & (df["mdrm_code"] == code)]["value"]
+            if s.empty:
+                return None
+            return float(s.iloc[0])
+
+        def _ratio(numer: float | None, denom: float | None) -> float | None:
+            if numer is None or denom is None or denom == 0:
+                return None
+            return (numer / denom) * 100
+
+        assets = _point_value("BHCK2170", sel_year, sel_qtr)
+        loans = _point_value("BHCKB528", sel_year, sel_qtr)
+        deposits = _point_value("BHDM6636", sel_year, sel_qtr)
+        equity = _point_value("BHCK3210", sel_year, sel_qtr)
+        net_income = _point_value("BHCK4301", sel_year, sel_qtr)
+        cap_tier1_risk = _point_value("FDIC_RBC1AAJ", sel_year, sel_qtr)
+        cap_total_risk = _point_value("FDIC_RBCRWAJ", sel_year, sel_qtr)
+        cap_tier1 = _point_value("FDIC_IDT1CER", sel_year, sel_qtr)
+
+        kcr1, kcr2, kcr3, kcr4 = st.columns(4)
+        kcr1.metric("Loans / Assets", f"{_ratio(loans, assets):.2f}%" if _ratio(loans, assets) is not None else "N/A")
+        kcr2.metric("Deposits / Assets", f"{_ratio(deposits, assets):.2f}%" if _ratio(deposits, assets) is not None else "N/A")
+        kcr3.metric("Equity / Assets", f"{_ratio(equity, assets):.2f}%" if _ratio(equity, assets) is not None else "N/A")
+        annualized_roa = _ratio((net_income * 4) if net_income is not None else None, assets)
+        kcr4.metric("ROA (annualized)", f"{annualized_roa:.2f}%" if annualized_roa is not None else "N/A")
+
+        st.markdown('<div class="sec-header">Regulatory Capital Ratios</div>', unsafe_allow_html=True)
+        cap1, cap2, cap3 = st.columns(3)
+        cap1.metric("Tier 1 Risk-Based", f"{cap_tier1_risk:.2f}%" if cap_tier1_risk is not None else "N/A")
+        cap2.metric("Total Risk-Based", f"{cap_total_risk:.2f}%" if cap_total_risk is not None else "N/A")
+        cap3.metric("Tier 1 Capital", f"{cap_tier1:.2f}%" if cap_tier1 is not None else "N/A")
+
+        available_codes = set(df["mdrm_code"].dropna().astype(str).unique())
+        capital_pairs = [
+            (name, code) for name, code in CALL_REPORT_CAPITAL_METRICS
+            if code in available_codes
+        ]
+        if capital_pairs:
+            st.plotly_chart(
+                timeseries_fig(
+                    df,
+                    capital_pairs,
+                    f"{sel_inst} — Regulatory capital ratio trends",
+                    sel_year,
+                    sel_qtr,
+                    start_year,
+                    height=360,
+                ),
+                use_container_width=True,
+            )
+        else:
+            st.info("Regulatory capital ratio fields are not available yet for this bank dataset version.")
+
+        st.markdown('<div class="sec-header">Call Report Trend Explorer</div>', unsafe_allow_html=True)
+        call_metric_options = [
+            name for name, code in CALL_REPORT_METRICS if code in available_codes
+        ]
+        default_call_metrics = [
+            m for m in ["Total Assets", "Net Loans & Leases", "Interest-Bearing Deposits", "Net Income"]
+            if m in call_metric_options
+        ]
+        selected_call_metrics = st.multiselect(
+            "Call Report metrics",
+            options=call_metric_options,
+            default=default_call_metrics,
+            key="call_report_metrics",
+        )
+
+        if selected_call_metrics:
+            call_pairs = [(name, CALL_REPORT_NAME_TO_MDRM[name]) for name in selected_call_metrics]
+            st.plotly_chart(
+                timeseries_fig(
+                    df,
+                    call_pairs,
+                    f"{sel_inst} — Call Report trends",
+                    sel_year,
+                    sel_qtr,
+                    start_year,
+                    height=430,
+                ),
+                use_container_width=True,
+            )
+        else:
+            st.info("Select at least one Call Report metric.")
+
+        st.markdown('<div class="sec-header">Balance Sheet Mix (Selected Quarter)</div>', unsafe_allow_html=True)
+        mix_rows = [
+            ("Assets", assets),
+            ("Loans", loans),
+            ("Deposits", deposits),
+            ("Equity", equity),
+            ("Liabilities", _point_value("BHCK2948", sel_year, sel_qtr)),
+        ]
+        mix_df = pd.DataFrame(mix_rows, columns=["component", "value"]).dropna()
+        if mix_df.empty:
+            st.info("No call report mix values are available for this quarter.")
+        else:
+            fig_mix = px.bar(
+                mix_df,
+                x="component",
+                y="value",
+                color="component",
+                title=f"{sel_inst} — {sel_year} Q{sel_qtr}",
+                color_discrete_sequence=px.colors.qualitative.Set2,
+            )
+            fig_mix.update_layout(yaxis_title="$", **{**PLOTLY_BASE, "height": 360, "showlegend": False})
+            st.plotly_chart(fig_mix, use_container_width=True)
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 3 — CLUSTER ANALYSIS
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_cluster:
     st.markdown('<div class="sec-header">Peer Cluster Analysis</div>', unsafe_allow_html=True)
@@ -766,7 +906,7 @@ with tab_cluster:
             st.plotly_chart(fig_box, use_container_width=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TAB 3 — CUSTOM CHARTS
+# TAB 4 — CUSTOM CHARTS
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_custom:
     st.markdown('<div class="sec-header">Custom Metric Chart</div>', unsafe_allow_html=True)
@@ -790,7 +930,7 @@ with tab_custom:
         st.info("Select at least one metric above.")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TAB 4 — ECONOMIC CONTEXT (FRED)
+# TAB 5 — ECONOMIC CONTEXT (FRED)
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_fred:
     st.markdown('<div class="sec-header">Macro Economic Context (FRED)</div>', unsafe_allow_html=True)
@@ -903,7 +1043,7 @@ with tab_fred:
         st.plotly_chart(fig_ov, use_container_width=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TAB 5 — MODEL FORECASTS
+# TAB 6 — MODEL FORECASTS
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_models:
     st.markdown('<div class="sec-header">Line Item Forecasts</div>', unsafe_allow_html=True)
@@ -1061,7 +1201,7 @@ with tab_models:
             st.info(str(exc))
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TAB 6 — MONITORING
+# TAB 7 — MONITORING
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_monitoring:
     st.markdown('<div class="sec-header">Rolling Cross-Validation Monitoring</div>', unsafe_allow_html=True)
@@ -1193,7 +1333,7 @@ with tab_monitoring:
             st.info(str(exc))
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TAB 7 — DATA TABLES
+# TAB 8 — DATA TABLES
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_tables:
     def _pivot_table(stmt_type: str) -> pd.DataFrame | None:
