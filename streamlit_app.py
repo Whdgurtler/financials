@@ -136,6 +136,7 @@ CALL_REPORT_METRICS: list[tuple[str, str]] = [
 ]
 
 CALL_REPORT_CAPITAL_METRICS: list[tuple[str, str]] = [
+    ("CET1 Capital Ratio", "FDIC_IDT1RWAJR"),
     ("Tier 1 Risk-Based Capital Ratio", "FDIC_RBC1AAJ"),
     ("Total Risk-Based Capital Ratio", "FDIC_RBCRWAJ"),
     ("Tier 1 Capital Ratio", "FDIC_IDT1CER"),
@@ -656,6 +657,7 @@ with tab_call_report:
         net_income = _point_value("BHCK4301", sel_year, sel_qtr)
         cap_tier1_risk = _point_value("FDIC_RBC1AAJ", sel_year, sel_qtr)
         cap_total_risk = _point_value("FDIC_RBCRWAJ", sel_year, sel_qtr)
+        cap_cet1 = _point_value("FDIC_IDT1RWAJR", sel_year, sel_qtr)
         cap_tier1 = _point_value("FDIC_IDT1CER", sel_year, sel_qtr)
 
         kcr1, kcr2, kcr3, kcr4 = st.columns(4)
@@ -666,10 +668,11 @@ with tab_call_report:
         kcr4.metric("ROA (annualized)", f"{annualized_roa:.2f}%" if annualized_roa is not None else "N/A")
 
         st.markdown('<div class="sec-header">Regulatory Capital Ratios</div>', unsafe_allow_html=True)
-        cap1, cap2, cap3 = st.columns(3)
-        cap1.metric("Tier 1 Risk-Based", f"{cap_tier1_risk:.2f}%" if cap_tier1_risk is not None else "N/A")
-        cap2.metric("Total Risk-Based", f"{cap_total_risk:.2f}%" if cap_total_risk is not None else "N/A")
-        cap3.metric("Tier 1 Capital", f"{cap_tier1:.2f}%" if cap_tier1 is not None else "N/A")
+        cap1, cap2, cap3, cap4 = st.columns(4)
+        cap1.metric("CET1", f"{cap_cet1:.2f}%" if cap_cet1 is not None else "N/A")
+        cap2.metric("Tier 1 Risk-Based", f"{cap_tier1_risk:.2f}%" if cap_tier1_risk is not None else "N/A")
+        cap3.metric("Total Risk-Based", f"{cap_total_risk:.2f}%" if cap_total_risk is not None else "N/A")
+        cap4.metric("Tier 1 Capital", f"{cap_tier1:.2f}%" if cap_tier1 is not None else "N/A")
 
         available_codes = set(df["mdrm_code"].dropna().astype(str).unique())
         capital_pairs = [
