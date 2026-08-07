@@ -24,14 +24,25 @@ def _load_hf_data():
         print(f"Loaded {len(_FINANCIAL_DF):,} rows")
 
 
+def _convert_ytd_to_quarterly(df):
+    """Y-9C income statement items are year-to-date. Convert to quarterly values."""
+    income_mask = df["statement_type"] == "income_statement"
+    income = df[income_mask].copy().sort_values(["mdrm_code", "year", "quarter"])
+    income["value"] = income.groupby(["mdrm_code", "year"])["value"].transform(
+        lambda s: s.diff().fillna(s)
+    )
+    return pd.concat([df[~income_mask], income], ignore_index=True)
+
+
 def load_financial_data(rssd_id=None):
     """Load financial data for a specific institution."""
     _load_hf_data()
     df = _FINANCIAL_DF
     if rssd_id:
         df = df[df["rssd_id"] == rssd_id]
-    return df[["report_date", "year", "quarter", "mdrm_code", "value",
-               "account_name", "statement_type", "category"]].sort_values(["year", "quarter"])
+    df = df[["report_date", "year", "quarter", "mdrm_code", "value",
+             "account_name", "statement_type", "category"]].sort_values(["year", "quarter"])
+    return _convert_ytd_to_quarterly(df)
 
 
 def get_available_institutions():
@@ -100,13 +111,25 @@ def create_summary_stats(df, selected_year, selected_quarter):
         ("BHCK4079", "Noninterest Income"),
     ]
 
+    # Income statement items need YTD sum (Q1 through selected quarter)
+    income_mdrs = set(
+        df[df["statement_type"] == "income_statement"]["mdrm_code"].unique()
+    )
+    ytd_data = df[(df["year"] == selected_year) & (df["quarter"] <= selected_quarter)]
+    prior_ytd = df[(df["year"] == selected_year - 1) & (df["quarter"] <= selected_quarter)]
+
     stats = []
     for mdrm, name in key_metrics:
-        current_val = current_data[current_data["mdrm_code"] == mdrm]["value"].values
-        prior_val = prior_year_data[prior_year_data["mdrm_code"] == mdrm]["value"].values if len(prior_year_data) > 0 else []
-
-        current = current_val[0] if len(current_val) > 0 else None
-        prior = prior_val[0] if len(prior_val) > 0 else None
+        if mdrm in income_mdrs:
+            cv = ytd_data[ytd_data["mdrm_code"] == mdrm]["value"]
+            pv = prior_ytd[prior_ytd["mdrm_code"] == mdrm]["value"]
+            current = cv.sum() if len(cv) > 0 else None
+            prior = pv.sum() if len(pv) > 0 else None
+        else:
+            current_val = current_data[current_data["mdrm_code"] == mdrm]["value"].values
+            prior_val = prior_year_data[prior_year_data["mdrm_code"] == mdrm]["value"].values if len(prior_year_data) > 0 else []
+            current = current_val[0] if len(current_val) > 0 else None
+            prior = prior_val[0] if len(prior_val) > 0 else None
 
         yoy = calculate_yoy_change(current, prior)
 
@@ -411,16 +434,28 @@ def _fmt_tval(v):
     return f"${v:,.0f}K"
 
 
-def create_statement_table(df, selected_year, selected_quarter, statement_type):
-    """Build a formatted DataFrame for the balance sheet or income statement tab."""
-    data = get_quarter_data(df, selected_year, selected_quarter)
-    stmt = data[data["statement_type"] == statement_type][["category", "account_name", "value"]].copy()
+def create_statement_table(df, selected_year, selected_quarter, statement_type, start_year=None):
+    """Build a formatted DataFrame with line items as rows and quarters as columns."""
+    stmt = df[df["statement_type"] == statement_type].copy()
+    if start_year is not None:
+        stmt = stmt[stmt["year"] >= start_year]
     if stmt.empty:
-        return pd.DataFrame(columns=["Category", "Line Item", "Value"])
-    stmt["Value"] = stmt["value"].apply(_fmt_tval)
+        return pd.DataFrame(columns=["Category", "Line Item"])
+
+    stmt["period"] = stmt.apply(lambda r: f"{int(r['year'])} Q{int(r['quarter'])}", axis=1)
     stmt["Category"] = stmt["category"].str.replace("_", " ").str.title()
-    stmt = stmt.rename(columns={"account_name": "Line Item"})
-    return stmt[["Category", "Line Item", "Value"]].sort_values(["Category", "Line Item"]).reset_index(drop=True)
+
+    pivot = stmt.pivot_table(
+        index=["Category", "account_name"],
+        columns="period",
+        values="value",
+        aggfunc="first"
+    )
+    sorted_cols = sorted(pivot.columns, key=lambda x: (int(x.split()[0]), int(x.split()[1][1])))
+    pivot = pivot[sorted_cols]
+    pivot = pivot.map(_fmt_tval)
+    pivot.index.names = ["Category", "Line Item"]
+    return pivot.reset_index().sort_values(["Category", "Line Item"]).reset_index(drop=True)
 
 
 def get_data(rssd_id=None):
@@ -512,8 +547,8 @@ def update_dashboard(institution_str, selected_quarter_str, years_back_str="3",
     fig_custom = create_timeseries_chart(df, custom_pairs, "Custom Metrics", selected_year, selected_quarter, start_year)
 
     # Statement tables
-    df_bs = create_statement_table(df, selected_year, selected_quarter, "balance_sheet")
-    df_is = create_statement_table(df, selected_year, selected_quarter, "income_statement")
+    df_bs = create_statement_table(df, selected_year, selected_quarter, "balance_sheet", start_year)
+    df_is = create_statement_table(df, selected_year, selected_quarter, "income_statement", start_year)
 
     # FRED / economic charts
     fig_rates = create_fred_chart(
@@ -546,7 +581,16 @@ def create_dashboard():
     """Create the Gradio dashboard interface."""
     global FRED_DATA
     print("Loading FRED economic data...")
-    FRED_DATA = load_fred_data()
+    try:
+        FRED_DATA = load_fred_data()
+        if FRED_DATA:
+            sample = next(iter(FRED_DATA.values()))
+            print(f"FRED: {len(FRED_DATA)} series loaded. Sample tail:\n{sample.tail(3)}")
+        else:
+            print("FRED: no data loaded (empty dict)")
+    except Exception as e:
+        print(f"FRED load failed: {e}")
+        FRED_DATA = {}
 
     institutions_df = get_available_institutions()
     if len(institutions_df) == 0:
@@ -558,8 +602,9 @@ def create_dashboard():
         for _, row in institutions_df.iterrows()
     }
     institution_choices = list(NAME_TO_RSSD.keys())
-    default_institution = institution_choices[0]
-    default_rssd = institutions_df.iloc[0]["rssd_id"]
+    usaa_name = next((n for n in NAME_TO_RSSD if NAME_TO_RSSD[n] == "1447376"), None)
+    default_institution = usaa_name if usaa_name else institution_choices[0]
+    default_rssd = "1447376" if usaa_name else institutions_df.iloc[0]["rssd_id"]
 
     df = get_data(default_rssd)
 
@@ -577,7 +622,11 @@ def create_dashboard():
         DEFAULT_CUSTOM_METRICS, default_overlay_bank, default_overlay_fred
     )
 
-    with gr.Blocks(title="Bank Holding Company Y-9C Dashboard") as demo:
+    css = """
+    .gradio-container { max-width: 100% !important; width: 100% !important; padding: 0 16px !important; }
+    footer { display: none !important; }
+    """
+    with gr.Blocks(title="Bank Holding Company Y-9C Dashboard", fill_width=True, css=css) as demo:
         gr.Markdown("# Bank Holding Company Financial Dashboard\n### FR Y-9C Regulatory Data Analysis")
 
         with gr.Row():
@@ -588,18 +637,18 @@ def create_dashboard():
         with gr.Tabs():
             with gr.Tab("Overview"):
                 gr.Markdown("## Key Metrics Summary")
-                summary_html = gr.HTML(value=initial_outputs[0])
+                summary_html = gr.HTML()
                 gr.Markdown("---\n## Trend Analysis")
                 with gr.Row():
-                    plot_balance = gr.Plot(value=initial_outputs[1])
-                    plot_income = gr.Plot(value=initial_outputs[2])
+                    plot_balance = gr.Plot()
+                    plot_income = gr.Plot()
                 with gr.Row():
-                    plot_deposits = gr.Plot(value=initial_outputs[3])
-                    plot_expense = gr.Plot(value=initial_outputs[4])
+                    plot_deposits = gr.Plot()
+                    plot_expense = gr.Plot()
                 gr.Markdown("---\n## Year-over-Year Comparison")
                 with gr.Row():
-                    plot_yoy_balance = gr.Plot(value=initial_outputs[5])
-                    plot_yoy_income = gr.Plot(value=initial_outputs[6])
+                    plot_yoy_balance = gr.Plot()
+                    plot_yoy_income = gr.Plot()
 
             with gr.Tab("Custom Chart"):
                 custom_metrics_dropdown = gr.Dropdown(
@@ -608,22 +657,22 @@ def create_dashboard():
                     multiselect=True,
                     label="Select Metrics to Chart"
                 )
-                plot_custom = gr.Plot(value=initial_outputs[7])
+                plot_custom = gr.Plot()
 
             with gr.Tab("Balance Sheet"):
-                table_bs = gr.Dataframe(value=initial_outputs[8], interactive=False)
+                table_bs = gr.Dataframe(interactive=False)
 
             with gr.Tab("Income Statement"):
-                table_is = gr.Dataframe(value=initial_outputs[9], interactive=False)
+                table_is = gr.Dataframe(interactive=False)
 
             with gr.Tab("Economic Context"):
                 gr.Markdown("### Interest Rates & Macro Environment")
                 with gr.Row():
-                    plot_rates = gr.Plot(value=initial_outputs[10])
-                    plot_curve = gr.Plot(value=initial_outputs[11])
+                    plot_rates = gr.Plot()
+                    plot_curve = gr.Plot()
                 with gr.Row():
-                    plot_spreads = gr.Plot(value=initial_outputs[12])
-                    plot_macro = gr.Plot(value=initial_outputs[13])
+                    plot_spreads = gr.Plot()
+                    plot_macro = gr.Plot()
                 gr.Markdown("---\n### Overlay: Bank Metric vs Economic Indicator")
                 with gr.Row():
                     overlay_bank_dropdown = gr.Dropdown(
@@ -636,7 +685,7 @@ def create_dashboard():
                         value=default_overlay_fred,
                         label="Economic Series (right axis)"
                     )
-                plot_overlay = gr.Plot(value=initial_outputs[14])
+                plot_overlay = gr.Plot()
 
         gr.Markdown('<div style="text-align: center; color: #666; font-size: 12px; margin-top: 20px;">Data Source: FR Y-9C Regulatory Filings + FRED (St. Louis Fed)</div>')
 
@@ -645,6 +694,9 @@ def create_dashboard():
         main_outputs = [summary_html, plot_balance, plot_income, plot_deposits, plot_expense,
                         plot_yoy_balance, plot_yoy_income, plot_custom, table_bs, table_is,
                         plot_rates, plot_curve, plot_spreads, plot_macro, plot_overlay]
+
+        # Populate charts client-side on page load (avoids SSR rendering bugs)
+        demo.load(fn=update_dashboard, inputs=main_inputs, outputs=main_outputs)
 
         # Main controls trigger full update
         for ctrl in [institution_dropdown, quarter_dropdown, years_dropdown, custom_metrics_dropdown]:

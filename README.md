@@ -3,15 +3,14 @@ title: BHC Y-9C Financial Dashboard
 emoji: 🏦
 colorFrom: blue
 colorTo: indigo
-sdk: gradio
-sdk_version: 5.0.0
-app_file: gradio_dashboard.py
+sdk: streamlit
+app_file: streamlit_app.py
 pinned: false
 ---
 
 # Bank Holding Company Y-9C Financial Data Scraper
 
-A Python tool for downloading, processing, and analyzing FR Y-9C regulatory filings for all U.S. bank holding companies.
+A Python tool for downloading, processing, forecasting, and analyzing FR Y-9C regulatory filings for U.S. bank holding companies.
 
 ## Overview
 
@@ -34,7 +33,7 @@ python -m src.y9c.cli --init
 python gradio_dashboard.py
 ```
 
-Then open http://127.0.0.1:7860 in your browser.
+Then open the Streamlit URL shown in the terminal, typically http://127.0.0.1:8501.
 
 ## Project Structure
 
@@ -48,7 +47,8 @@ y9c_scraper/
 │   └── cli.py               # Command-line interface
 ├── src/dashboard/           # Dashboard module
 │   └── app.py               # Gradio dashboard interface
-├── gradio_dashboard.py      # Main dashboard entry point
+├── streamlit_app.py         # Main Streamlit dashboard entry point
+├── gradio_dashboard.py      # Legacy Gradio dashboard entry point
 ├── data/                    # Data directory (gitignored)
 │   ├── raw/                 # Downloaded ZIP files
 │   ├── processed/           # Extracted data files
@@ -84,6 +84,8 @@ The interactive dashboard includes:
 - **YTD statistics** - Year-to-date Total Revenue, Total Expense, and Net Income with Y-o-Y comparisons
 - **Trend charts** - Balance sheet and income statement trends over time
 - **Y-o-Y comparisons** - Bar charts comparing current quarter to prior year
+- **Model forecasts** - Bank-level line-item forecasts with selectors for bank, balance sheet vs income statement, model, and horizon
+- **Monitoring tab** - Rolling 1-year-ahead and 3-year-ahead cross-validation diagnostics by bank and line item
 
 ## Data Sources
 

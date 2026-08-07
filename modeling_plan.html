@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Y-9C Multi-Model Forecasting Pipeline — Plan</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 960px; margin: 40px auto; padding: 0 24px; color: #1a1a1a; line-height: 1.6; }
+  h1 { font-size: 1.8rem; border-bottom: 3px solid #2E86AB; padding-bottom: 10px; color: #1a1a1a; }
+  h2 { font-size: 1.3rem; margin-top: 2.2rem; color: #2E86AB; border-left: 4px solid #2E86AB; padding-left: 10px; }
+  h3 { font-size: 1.05rem; margin-top: 1.6rem; color: #333; }
+  code { background: #f0f4f8; padding: 2px 6px; border-radius: 4px; font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 0.88em; color: #c7254e; }
+  pre { background: #f0f4f8; border-left: 4px solid #ccc; padding: 14px 16px; border-radius: 4px; overflow-x: auto; font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 0.85em; line-height: 1.5; }
+  pre code { background: none; padding: 0; color: #333; }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; }
+  th { background: #2E86AB; color: white; padding: 8px 12px; text-align: left; font-size: 0.9rem; }
+  td { padding: 7px 12px; border-bottom: 1px solid #e0e0e0; font-size: 0.9rem; vertical-align: top; }
+  tr:nth-child(even) td { background: #f8f9fa; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 0.78em; font-weight: 600; }
+  .badge-blue { background: #dbeafe; color: #1d4ed8; }
+  .badge-green { background: #dcfce7; color: #166534; }
+  .badge-orange { background: #ffedd5; color: #9a3412; }
+  .badge-gray { background: #f1f5f9; color: #475569; }
+  .step { border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px 20px; margin: 14px 0; }
+  .step-header { font-weight: 700; font-size: 0.95rem; margin-bottom: 8px; }
+  ul { padding-left: 20px; margin: 8px 0; }
+  li { margin: 4px 0; }
+  .callout { background: #fff8e1; border-left: 4px solid #f59e0b; padding: 12px 16px; border-radius: 4px; margin: 14px 0; font-size: 0.92rem; }
+  .callout strong { color: #92400e; }
+  hr { border: none; border-top: 1px solid #e2e8f0; margin: 2rem 0; }
+  .toc { background: #f8f9fa; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px 20px; margin-bottom: 2rem; }
+  .toc ul { list-style: none; padding-left: 0; margin: 0; }
+  .toc li { padding: 3px 0; }
+  .toc a { color: #2E86AB; text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+  .file-tree { font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 0.85em; background: #f0f4f8; border-left: 4px solid #2E86AB; padding: 14px 16px; border-radius: 4px; line-height: 1.7; }
+</style>
+</head>
+<body>
+
+<h1>Y-9C Multi-Model Forecasting Pipeline</h1>
+<p style="color:#666; font-size:0.9rem;">Implementation Plan &mdash; Generated 2026-06-08</p>
+
+<div class="toc">
+  <strong>Contents</strong>
+  <ul>
+    <li><a href="#context">Context &amp; Architecture</a></li>
+    <li><a href="#decisions">Key Design Decisions</a></li>
+    <li><a href="#structure">Module Structure</a></li>
+    <li><a href="#steps">Implementation Steps (14 steps)</a></li>
+    <li><a href="#reuse">Existing Code to Reuse</a></li>
+    <li><a href="#deps">New Dependencies</a></li>
+    <li><a href="#verification">Verification</a></li>
+    <li><a href="#scale">Scale Note</a></li>
+  </ul>
+</div>
+
+<h2 id="context">Context &amp; Architecture</h2>
+<p>302 U.S. bank holding companies, 97 quarters of Y-9C regulatory data (2002–2026). Goal: predict every income statement and balance sheet line item using lagged balance sheet items + macro covariates, with per-target RFECV feature selection, multiple model families, SHAP explainability, MLflow tracking, and Gradio dashboard integration.</p>
+
+<div class="callout">
+  <strong>Key architectural split:</strong><br>
+  <strong>Tree models (XGBoost, LightGBM):</strong> <em>per-bank</em> — separate model per institution × target. 302 × ~91 ≈ 27,400 models. Requires parallelism.<br>
+  <strong>Neural models (TFT, DeepVAR):</strong> <em>global multi-entity</em> — designed for cross-bank pooling; 97 rows/bank is too few for a transformer/RNN individually. TFT uses bank-level static covariates; DeepVAR jointly models all targets.
+</div>
+
+<h2 id="decisions">Key Design Decisions</h2>
+<table>
+  <tr><th>#</th><th>Decision</th><th>Choice</th></tr>
+  <tr><td>1</td><td>Income statement representation</td><td>Convert YTD → quarterly via within-year diff before any feature engineering (port <code>_convert_ytd_to_quarterly</code> from <code>gradio_dashboard.py:27</code>)</td></tr>
+  <tr><td>2</td><td>Predictor groups</td><td>Hard-coded economic logic — each target mapped to an allowed set of balance sheet lags + FRED series (see Step 1)</td></tr>
+  <tr><td>3</td><td>Feature selection</td><td>RFECV per-bank per-target using <code>TimeSeriesSplit</code>; step estimator = LightGBM</td></tr>
+  <tr><td>4</td><td>Cross-validation</td><td><code>TimeSeriesSplit(n_splits=5, min_train_size=20)</code></td></tr>
+  <tr><td>5</td><td>Tree model scope</td><td>Per-bank (separate model per institution)</td></tr>
+  <tr><td>6</td><td>Results storage</td><td>MLflow — experiment per model family, run per bank × target</td></tr>
+</table>
+
+<h2 id="structure">Module Structure</h2>
+<div class="file-tree">
+src/y9c/modeling/<br>
+├── __init__.py<br>
+├── config/<br>
+│   ├── predictor_groups.py &nbsp;&nbsp;<span style="color:#666"># target → allowed predictors</span><br>
+│   └── model_params.py &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:#666"># hyperparameters, CV config</span><br>
+├── data/<br>
+│   ├── prep.py &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:#666"># YTD→quarterly, scaling, per-bank builder</span><br>
+│   └── cv.py &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:#666"># TimeSeriesSplit wrapper + rolling CV runner</span><br>
+├── features/<br>
+│   ├── engineer.py &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:#666"># lags, rolling stats</span><br>
+│   └── selector.py &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:#666"># RFECV wrapper per bank×target</span><br>
+├── models/<br>
+│   ├── base.py &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:#666"># abstract ForecastModel interface</span><br>
+│   ├── xgb.py &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:#666"># XGBoost per-bank</span><br>
+│   ├── lgbm.py &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:#666"># LightGBM per-bank</span><br>
+│   ├── tft.py &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:#666"># TFT global (PyTorch Forecasting)</span><br>
+│   └── deepvar.py &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:#666"># DeepVAR global (GluonTS)</span><br>
+├── explain/<br>
+│   ├── shap_explain.py &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:#666"># TreeExplainer for XGB/LGBM</span><br>
+│   └── neural_explain.py &nbsp;&nbsp;&nbsp;&nbsp;<span style="color:#666"># TFT attention weights</span><br>
+├── results.py &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:#666"># MLflow query helpers (used by pipeline + dashboard)</span><br>
+└── pipeline.py &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color:#666"># orchestrator: parallelised bank × target loop</span>
+</div>
+
+<h2 id="steps">Implementation Steps</h2>
+
+<div class="step">
+  <div class="step-header">Step 1 &mdash; <code>modeling/config/predictor_groups.py</code></div>
+  <p>Define <code>PREDICTOR_GROUPS: dict[str, dict]</code> mapping each target MDRM to its allowed predictor pool.</p>
+  <table>
+    <tr><th>Target group</th><th>Balance sheet lags</th><th>FRED covariates</th></tr>
+    <tr><td>Interest income items</td><td>Loan balances, securities, trading assets</td><td>Fed Funds, 2Y/10Y yields</td></tr>
+    <tr><td>Interest expense</td><td>Deposit balances, subordinated debt</td><td>Fed Funds, 2Y yield</td></tr>
+    <tr><td>Provision / credit loss</td><td>Gross loans, delinquency rates</td><td>HY spread, unemployment</td></tr>
+    <tr><td>Noninterest income</td><td>Fee-related assets, total assets</td><td>CPI, unemployment</td></tr>
+    <tr><td>Noninterest expense</td><td>Total assets, prior-period expense</td><td>CPI</td></tr>
+    <tr><td>Balance sheet items</td><td>Own lags + related items</td><td>Full FRED set</td></tr>
+  </table>
+  <p>Each entry: <code>{"balance_sheet_lags": [...], "fred_series": [...], "n_lags": int}</code>. Source MDRM codes from <code>src/y9c/config.py:get_all_mdrm_codes()</code>.</p>
+</div>
+
+<div class="step">
+  <div class="step-header">Step 2 &mdash; <code>modeling/data/prep.py</code></div>
+  <p><code>build_bank_dataset(rssd_id, target_mdrm, predictor_group_cfg) → pd.DataFrame</code></p>
+  <ul>
+    <li>Load from <code>datasets.load_joined()</code>, filter to single bank</li>
+    <li><strong>YTD→quarterly</strong>: diff income statement columns within year (port from <code>gradio_dashboard.py:27-34</code>)</li>
+    <li>Select columns: target + allowed predictors only</li>
+    <li>Drop rows with NaN in target; forward-fill predictors (max 2 quarters)</li>
+    <li>Return tidy (T × features) DataFrame sorted by date with <code>report_date</code> as index</li>
+  </ul>
+</div>
+
+<div class="step">
+  <div class="step-header">Step 3 &mdash; <code>modeling/features/engineer.py</code></div>
+  <p><code>add_features(df, target_col, predictor_group_cfg) → (X, y, feature_names)</code></p>
+  <p>Three distinct lag groups, all grouped by <code>rssd_id</code>:</p>
+  <table>
+    <tr><th>Feature group</th><th>What gets lagged</th><th>Detail</th></tr>
+    <tr><td><strong>Predictor lags</strong></td><td>Each balance sheet predictor in the group config</td><td>lag1…lag<em>N</em> (default N=4) + rolling mean 4Q, 8Q per predictor</td></tr>
+    <tr><td><strong>Target own-lags (AR)</strong></td><td>The target variable itself</td><td>lag1…lag<em>N</em> — captures momentum / mean-reversion</td></tr>
+    <tr><td><strong>FRED covariates</strong></td><td>Current-quarter economic series</td><td>Used as-is — known at prediction time, no lag needed</td></tr>
+  </table>
+  <ul>
+    <li>Raw (t=0) values of predictors and target are <strong>excluded</strong> — only lagged/rolling to prevent look-ahead leakage</li>
+    <li>Drop first <code>n_lags</code> rows per bank (NaN from lags)</li>
+    <li>Add cyclical quarter encoding (sin/cos)</li>
+    <li>Reuses <code>_add_lags</code> / <code>_add_rolling</code> from <code>src/y9c/models/xgb.py:43-69</code></li>
+  </ul>
+</div>
+
+<div class="step">
+  <div class="step-header">Step 4 &mdash; <code>modeling/data/cv.py</code></div>
+  <p><code>make_cv_splits(n_obs, n_splits=5, min_train=20) → TimeSeriesSplit</code></p>
+  <ul>
+    <li>Wraps <code>sklearn.model_selection.TimeSeriesSplit</code>, enforces <code>min_train_size=20</code></li>
+    <li><code>rolling_cv_score(estimator, X, y, cv, metrics)</code> → per-fold metrics dict</li>
+  </ul>
+</div>
+
+<div class="step">
+  <div class="step-header">Step 5 &mdash; <code>modeling/features/selector.py</code></div>
+  <p><code>select_features(X, y, cv, n_jobs=-1) → list[str]</code></p>
+  <ul>
+    <li><code>RFECV(estimator=LGBMRegressor(n_estimators=100), cv=cv, scoring="neg_mean_absolute_error")</code></li>
+    <li>Caches result to MLflow as <code>selected_features.json</code> so reruns skip selection</li>
+    <li>Parallel via <code>n_jobs</code> — each bank×target call is independent</li>
+  </ul>
+</div>
+
+<div class="step">
+  <div class="step-header">Step 6 &mdash; <code>modeling/models/base.py</code></div>
+  <pre><code>class ForecastModel:
+    def fit(self, X_train, y_train): ...
+    def predict(self, X): ...
+    def save(self, path): ...
+    @classmethod
+    def load(cls, path): ...</code></pre>
+</div>
+
+<div class="step">
+  <div class="step-header">Step 7 &mdash; <code>modeling/models/xgb.py</code> and <code>lgbm.py</code></div>
+  <p>Per-bank wrappers implementing <code>ForecastModel</code>. Serialise with <code>joblib</code>. Support <code>horizon=1</code> (extend to multi-horizon via recursive prediction).</p>
+</div>
+
+<div class="step">
+  <div class="step-header">Step 8 &mdash; <code>modeling/explain/shap_explain.py</code></div>
+  <p><code>compute_shap(model, X, max_rows=500) → pd.DataFrame</code></p>
+  <ul>
+    <li><code>shap.TreeExplainer</code> for XGB/LGBM</li>
+    <li>Returns (rows × features) SHAP value DataFrame</li>
+    <li>Logs mean |SHAP| bar chart + <code>summary_plot</code> PNG to MLflow</li>
+  </ul>
+</div>
+
+<div class="step">
+  <div class="step-header">Step 9 &mdash; <code>modeling/models/tft.py</code> <span class="badge badge-blue">Global</span></div>
+  <p>Uses <strong>PyTorch Forecasting</strong> <code>TemporalFusionTransformer</code>.</p>
+  <ul>
+    <li>Static categoricals: <code>rssd_id</code> (bank identity)</li>
+    <li>Static reals: <code>log(total_assets)</code> as bank size</li>
+    <li>Time-varying known reals: FRED series</li>
+    <li>Time-varying unknown reals: Y-9C target columns (observed to time t)</li>
+    <li><code>max_prediction_length=4</code>, <code>max_encoder_length=20</code></li>
+  </ul>
+</div>
+
+<div class="step">
+  <div class="step-header">Step 10 &mdash; <code>modeling/models/deepvar.py</code> <span class="badge badge-blue">Global</span></div>
+  <p>Uses <strong>GluonTS</strong> <code>DeepVAREstimator</code>. Jointly models all target series per bank. Reuses <code>src/y9c/models/deepar.py:prepare_deepar_data()</code> as data prep base. <code>prediction_length=4</code>, <code>context_length=20</code>.</p>
+</div>
+
+<div class="step">
+  <div class="step-header">Step 11 &mdash; <code>modeling/pipeline.py</code></div>
+  <p><code>run_pipeline(rssd_ids=None, targets=None, models=["xgb","lgbm"], n_jobs=4)</code></p>
+  <ul>
+    <li>Outer loop: <code>Parallel(n_jobs)(bank × target)</code> via <code>joblib</code></li>
+    <li>Per iteration: build dataset → add features → select features (or load cached) → rolling CV → fit → SHAP → log to MLflow</li>
+    <li>Neural models (TFT, DeepVAR) run as separate global pass after per-bank loop</li>
+    <li>MLflow: experiment = <code>{model_type}</code>, run name = <code>{rssd_id}__{target_mdrm}</code></li>
+  </ul>
+</div>
+
+<div class="step">
+  <div class="step-header">Step 12 &mdash; <code>modeling/explain/neural_explain.py</code></div>
+  <p>TFT attention weight extractor. Calls <code>model.interpret_output()</code> from pytorch-forecasting. Extracts variable importance + attention patterns → saves as JSON artifact in MLflow.</p>
+</div>
+
+<div class="step">
+  <div class="step-header">Step 13 &mdash; Gradio: <strong>"Model Diagnostics" Tab</strong></div>
+  <p>New tab in <code>gradio_dashboard.py</code> reading from MLflow. Controls: institution, target variable, model type.</p>
+  <table>
+    <tr><th>Sub-tab</th><th>Content</th></tr>
+    <tr><td><strong>SHAP Summary</strong></td><td>summary_plot image; mean |SHAP| bar chart; top-N feature table</td></tr>
+    <tr><td><strong>Variable Importance</strong></td><td>Gain/weight bar chart for trees; TFT variable importance</td></tr>
+    <tr><td><strong>Rolling CV Metrics</strong></td><td>MAE/RMSE per CV fold over time; train vs val</td></tr>
+    <tr><td><strong>Feature Selection</strong></td><td>RFECV-selected features for chosen bank × target; selection frequency across folds</td></tr>
+  </table>
+  <p>Data via <code>load_mlflow_results(rssd_id, target_mdrm, model_type)</code> in <code>src/y9c/modeling/results.py</code>. Graceful empty state when no model trained yet.</p>
+</div>
+
+<div class="step">
+  <div class="step-header">Step 14 &mdash; Gradio: <strong>"Model Results" Tab</strong></div>
+  <p>Focused on outputs: actuals vs predictions and future forecasts. Controls: institution, target, model type, horizon (1Q/2Q/4Q).</p>
+  <table>
+    <tr><th>Panel</th><th>Content</th></tr>
+    <tr><td><strong>Actuals vs Fitted</strong></td><td>Full history: actual (solid) + fitted (dashed) + ±1σ CV error bands</td></tr>
+    <tr><td><strong>Rolling CV Predictions</strong></td><td>Each fold's OOS predictions on a timeline — shows how quality evolves</td></tr>
+    <tr><td><strong>Future Forecast</strong></td><td>Point forecast + confidence interval for 1–4Q ahead; training cutoff annotated</td></tr>
+    <tr><td><strong>Residuals</strong></td><td>Residual over time + ACF of residuals</td></tr>
+    <tr><td><strong>Metrics Table</strong></td><td>MAE, RMSE, MAPE, R² per fold + aggregate; cross-model comparison</td></tr>
+  </table>
+  <p>Predictions and residuals stored as parquet artifacts in MLflow runs.</p>
+</div>
+
+<h2 id="reuse">Existing Code to Reuse</h2>
+<table>
+  <tr><th>New component</th><th>Reuse from</th></tr>
+  <tr><td>YTD→quarterly conversion</td><td><code>gradio_dashboard.py:27-34</code> — <code>_convert_ytd_to_quarterly()</code></td></tr>
+  <tr><td>Lag/rolling feature helpers</td><td><code>src/y9c/models/xgb.py:43-69</code> — <code>_add_lags()</code>, <code>_add_rolling()</code></td></tr>
+  <tr><td>DeepVAR data prep base</td><td><code>src/y9c/models/deepar.py</code> — <code>prepare_deepar_data()</code></td></tr>
+  <tr><td>FRED loading</td><td><code>src/y9c/fred_data.py</code> — <code>load_fred_data()</code></td></tr>
+  <tr><td>Dataset loading</td><td><code>src/y9c/datasets.py</code> — <code>load_joined()</code></td></tr>
+  <tr><td>MDRM catalog</td><td><code>src/y9c/config.py</code> — <code>get_all_mdrm_codes()</code></td></tr>
+</table>
+
+<h2 id="deps">New Dependencies to Add to <code>requirements.txt</code></h2>
+<pre><code>lightgbm>=4.0.0
+shap>=0.44.0
+mlflow>=2.10.0
+pytorch-forecasting>=1.0.0
+lightning>=2.0.0</code></pre>
+
+<h2 id="verification">Verification</h2>
+<ol>
+  <li><strong>Unit tests</strong>: <code>pytest src/y9c/modeling/</code> — test <code>build_bank_dataset</code> shape; test YTD conversion correctness; test RFECV returns a subset of input features</li>
+  <li><strong>Smoke test</strong>: <code>python -m src.y9c.modeling.pipeline --rssd-ids 1447376 --models xgb --targets BHCK4301</code> — single bank, single target; verify MLflow run appears</li>
+  <li><strong>Sample run</strong>: 10 banks, all targets, XGBoost only — no crashes, MLflow populated</li>
+  <li><strong>SHAP check</strong>: SHAP values sum to ≈ (prediction − baseline) for a sample row</li>
+  <li><strong>Neural smoke test</strong>: TFT + DeepVAR on 5 banks, 2 targets, 1 epoch — loss decreases</li>
+</ol>
+
+<h2 id="scale">Scale Note</h2>
+<div class="callout">
+  <strong>Per-bank × per-target RFECV ≈ 27,400 runs.</strong> At 30s each → ~230 CPU-hours. Mitigations:
+  <ul style="margin-top: 8px;">
+    <li>Cache RFECV results as MLflow artifacts — reruns skip selection</li>
+    <li>Use <code>n_jobs=4–8</code> parallelism on local machine</li>
+    <li>Start with a priority subset (USAA + top-10 by assets) before full run</li>
+  </ul>
+</div>
+
+<hr>
+<p style="color:#999; font-size:0.82rem;">Y-9C Forecasting Pipeline Plan &mdash; usaa_y9c_scraper &mdash; 2026-06-08</p>
+
+</body>
+</html>
