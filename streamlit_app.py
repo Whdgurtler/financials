@@ -645,6 +645,15 @@ with tab_call_report:
                 return None
             return float(s.iloc[0])
 
+        def _latest_capital_period() -> tuple[int, int] | None:
+            cap_codes = {"FDIC_IDT1RWAJR", "FDIC_RBC1AAJ", "FDIC_RBCRWAJ", "FDIC_IDT1CER"}
+            cap_hist = df[df["mdrm_code"].isin(cap_codes)][["year", "quarter"]].drop_duplicates()
+            if cap_hist.empty:
+                return None
+            cap_hist = cap_hist.sort_values(["year", "quarter"])
+            last = cap_hist.iloc[-1]
+            return int(last["year"]), int(last["quarter"])
+
         def _ratio(numer: float | None, denom: float | None) -> float | None:
             if numer is None or denom is None or denom == 0:
                 return None
@@ -655,10 +664,20 @@ with tab_call_report:
         deposits = _point_value("BHDM6636", sel_year, sel_qtr)
         equity = _point_value("BHCK3210", sel_year, sel_qtr)
         net_income = _point_value("BHCK4301", sel_year, sel_qtr)
-        cap_tier1_risk = _point_value("FDIC_RBC1AAJ", sel_year, sel_qtr)
-        cap_total_risk = _point_value("FDIC_RBCRWAJ", sel_year, sel_qtr)
-        cap_cet1 = _point_value("FDIC_IDT1RWAJR", sel_year, sel_qtr)
-        cap_tier1 = _point_value("FDIC_IDT1CER", sel_year, sel_qtr)
+        cap_year, cap_qtr = sel_year, sel_qtr
+        cap_tier1_risk = _point_value("FDIC_RBC1AAJ", cap_year, cap_qtr)
+        cap_total_risk = _point_value("FDIC_RBCRWAJ", cap_year, cap_qtr)
+        cap_cet1 = _point_value("FDIC_IDT1RWAJR", cap_year, cap_qtr)
+        cap_tier1 = _point_value("FDIC_IDT1CER", cap_year, cap_qtr)
+
+        if all(v is None for v in [cap_tier1_risk, cap_total_risk, cap_cet1, cap_tier1]):
+            latest_cap = _latest_capital_period()
+            if latest_cap is not None:
+                cap_year, cap_qtr = latest_cap
+                cap_tier1_risk = _point_value("FDIC_RBC1AAJ", cap_year, cap_qtr)
+                cap_total_risk = _point_value("FDIC_RBCRWAJ", cap_year, cap_qtr)
+                cap_cet1 = _point_value("FDIC_IDT1RWAJR", cap_year, cap_qtr)
+                cap_tier1 = _point_value("FDIC_IDT1CER", cap_year, cap_qtr)
 
         kcr1, kcr2, kcr3, kcr4 = st.columns(4)
         kcr1.metric("Loans / Assets", f"{_ratio(loans, assets):.2f}%" if _ratio(loans, assets) is not None else "N/A")
@@ -668,6 +687,8 @@ with tab_call_report:
         kcr4.metric("ROA (annualized)", f"{annualized_roa:.2f}%" if annualized_roa is not None else "N/A")
 
         st.markdown('<div class="sec-header">Regulatory Capital Ratios</div>', unsafe_allow_html=True)
+        if (cap_year, cap_qtr) != (sel_year, sel_qtr):
+            st.caption(f"Showing latest available capital quarter for this bank: {cap_year} Q{cap_qtr}.")
         cap1, cap2, cap3, cap4 = st.columns(4)
         cap1.metric("CET1", f"{cap_cet1:.2f}%" if cap_cet1 is not None else "N/A")
         cap2.metric("Tier 1 Risk-Based", f"{cap_tier1_risk:.2f}%" if cap_tier1_risk is not None else "N/A")
