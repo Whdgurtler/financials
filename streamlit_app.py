@@ -17,6 +17,7 @@ from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 
 from src.y9c.forecasting import (
+    ForecastResult,
     HORIZON_LABELS,
     MODEL_LABELS,
     build_model_panel,
@@ -189,6 +190,70 @@ def _load_raw() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame 
     return fin, inst, fred, bank_fin, bank_inst
 
 
+@st.cache_data(show_spinner="Loading precomputed forecasts…")
+def _load_forecast_store() -> dict[str, pd.DataFrame]:
+    """Load the batch-precomputed XGBoost forecasts (scripts/run_forecasts.py).
+
+    Falls back to empty frames if the artifacts aren't published yet, in which
+    case callers should train live instead.
+    """
+    names = [
+        "forecast_metrics",
+        "forecast_predictions",
+        "forecast_future",
+        "forecast_importance",
+    ]
+    store = {}
+    for name in names:
+        df = _try_read_hf_parquet(f"hf://datasets/{HF_REPO}/{name}.parquet")
+        store[name] = df if df is not None else pd.DataFrame()
+    if not store["forecast_metrics"].empty:
+        for name in names:
+            store[name]["rssd_id"] = store[name]["rssd_id"].astype(str)
+    return store
+
+
+def _precomputed_forecast(
+    store: dict[str, pd.DataFrame],
+    rssd_id: str,
+    target_code: str,
+    model_name: str,
+    horizon_quarters: int,
+) -> ForecastResult | None:
+    metrics = store["forecast_metrics"]
+    if metrics.empty:
+        return None
+    # Metrics store the human-readable label ("XGBoost"); predictions/future/
+    # importance store the internal key ("xgboost") -- accept either.
+    model_label = MODEL_LABELS.get(model_name, model_name)
+    key_mask = lambda df: (
+        (df["rssd_id"] == str(rssd_id))
+        & (df["target_code"] == target_code)
+        & (df["model"].isin({model_name, model_label}))
+        & (df["horizon_quarters"] == horizon_quarters)
+    )
+    metrics_row = metrics[key_mask(metrics)]
+    if metrics_row.empty:
+        return None
+
+    predictions = store["forecast_predictions"]
+    future = store["forecast_future"]
+    importance = store["forecast_importance"]
+    drop_cols = ["rssd_id", "target_code", "horizon_quarters", "model"]
+
+    return ForecastResult(
+        target_code=target_code,
+        target_name=metrics_row["target_name"].iloc[0],
+        statement_type=metrics_row["statement_type"].iloc[0],
+        model_name=model_name,
+        horizon_quarters=horizon_quarters,
+        predictions=predictions[key_mask(predictions)].drop(columns=drop_cols).reset_index(drop=True),
+        metrics=metrics_row[["model", "horizon_quarters", "folds", "mae", "rmse", "mape", "r2"]].reset_index(drop=True),
+        feature_importance=importance[key_mask(importance)].drop(columns=drop_cols).reset_index(drop=True),
+        future_forecast=future[key_mask(future)].drop(columns=drop_cols).reset_index(drop=True),
+    )
+
+
 @st.cache_data(show_spinner="Transforming YTD → quarterly…")
 def _convert_ytd_to_quarterly(fin: pd.DataFrame) -> pd.DataFrame:
     """Convert Y-9C income statement YTD values to quarterly deltas."""
@@ -263,6 +328,11 @@ def _cached_forecast(
     model_name: str,
     horizon_quarters: int,
 ):
+    precomputed = _precomputed_forecast(
+        _load_forecast_store(), rssd_id, target_code, model_name, horizon_quarters
+    )
+    if precomputed is not None:
+        return precomputed
     return run_forecast(
         panel_df=panel_df,
         rssd_id=rssd_id,
@@ -279,9 +349,11 @@ def _cached_monitoring(
     target_code: str,
     model_name: str,
 ):
+    store = _load_forecast_store()
     results = {}
     for horizon in HORIZON_LABELS.values():
-        results[horizon] = run_forecast(
+        precomputed = _precomputed_forecast(store, rssd_id, target_code, model_name, horizon)
+        results[horizon] = precomputed if precomputed is not None else run_forecast(
             panel_df=panel_df,
             rssd_id=rssd_id,
             target_code=target_code,

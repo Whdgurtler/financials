@@ -8,18 +8,17 @@ import pandas as pd
 from sklearn.base import clone
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.impute import SimpleImputer
-from sklearn.linear_model import ElasticNet
 from sklearn.exceptions import ConvergenceWarning
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
+from xgboost import XGBRegressor
 
 from .config import get_all_mdrm_codes
 
 
 MODEL_LABELS = {
-    "elastic_net": "Elastic Net",
     "random_forest": "Random Forest",
+    "xgboost": "XGBoost",
 }
 
 HORIZON_LABELS = {
@@ -149,14 +148,7 @@ def _feature_columns(statement_type: str, target_code: str, panel_df: pd.DataFra
     return [code for code in predictors if code in panel_df.columns]
 
 
-def _build_model(model_name: str):
-    if model_name == "elastic_net":
-        return Pipeline([
-            ("imputer", SimpleImputer(strategy="median")),
-            ("scaler", StandardScaler()),
-            ("model", ElasticNet(alpha=0.05, l1_ratio=0.2, max_iter=10000, random_state=42)),
-        ])
-
+def _build_model(model_name: str, n_jobs: int = -1):
     if model_name == "random_forest":
         return Pipeline([
             ("imputer", SimpleImputer(strategy="median")),
@@ -164,7 +156,22 @@ def _build_model(model_name: str):
                 n_estimators=250,
                 min_samples_leaf=2,
                 random_state=42,
-                n_jobs=-1,
+                n_jobs=n_jobs,
+            )),
+        ])
+
+    if model_name == "xgboost":
+        return Pipeline([
+            ("imputer", SimpleImputer(strategy="median")),
+            ("model", XGBRegressor(
+                n_estimators=300,
+                max_depth=4,
+                learning_rate=0.05,
+                subsample=0.8,
+                colsample_bytree=0.8,
+                reg_lambda=1.0,
+                random_state=42,
+                n_jobs=n_jobs,
             )),
         ])
 
@@ -257,7 +264,18 @@ def run_forecast(
     horizon_quarters: int,
     n_lags: int = 4,
     min_train_size: int = 16,
+    max_folds: int | None = None,
+    model_n_jobs: int = -1,
 ) -> ForecastResult:
+    """Train ``model_name`` for one (institution, target, horizon).
+
+    ``max_folds`` caps the walk-forward backtest to the most recent N folds
+    (still trained on all history up to each fold) — useful for batch
+    precomputation across many institutions/targets where the full backtest
+    over every historical quarter is unnecessary. The final model used for
+    ``future_forecast`` is always trained on the complete available history
+    regardless of ``max_folds``.
+    """
     feature_frame, feature_cols, statement_type, target_name = _prepare_problem(
         panel_df=panel_df,
         rssd_id=rssd_id,
@@ -279,14 +297,18 @@ def run_forecast(
             f"Need more than {min_train_size + n_lags} usable quarters, found {len(train_df)}."
         )
 
+    first_split_idx = min_train_size
+    if max_folds is not None:
+        first_split_idx = max(min_train_size, len(train_df) - max_folds)
+
     predictions = []
-    for split_idx in range(min_train_size, len(train_df)):
+    for split_idx in range(first_split_idx, len(train_df)):
         train_slice = train_df.iloc[:split_idx]
         test_row = train_df.iloc[[split_idx]]
         split_feature_cols = _usable_feature_columns(train_slice, feature_cols)
         if not split_feature_cols:
             continue
-        model = clone(_build_model(model_name))
+        model = clone(_build_model(model_name, n_jobs=model_n_jobs))
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", category=ConvergenceWarning)
             model.fit(train_slice[split_feature_cols], train_slice["target"])
@@ -316,7 +338,7 @@ def run_forecast(
         "r2": r2_score(predictions_df["actual"], predictions_df["predicted"]),
     }])
 
-    full_model = clone(_build_model(model_name))
+    full_model = clone(_build_model(model_name, n_jobs=model_n_jobs))
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", category=ConvergenceWarning)
         full_model.fit(train_df[feature_cols], train_df["target"])

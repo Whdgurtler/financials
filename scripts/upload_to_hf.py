@@ -21,6 +21,7 @@ from huggingface_hub import HfApi, create_repo
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.y9c.fred_data import load_fred_data
+import run_forecasts
 
 DB_PATH = Path(__file__).parent.parent / "data" / "usaa_y9c.db"
 HF_REPO_ID = "Wgurtler/y9c-data"
@@ -97,6 +98,10 @@ def add_optional_exports(files):
     optional_names = [
         "bank_financial_data.parquet",
         "bank_institutions.parquet",
+        "forecast_metrics.parquet",
+        "forecast_predictions.parquet",
+        "forecast_future.parquet",
+        "forecast_importance.parquet",
     ]
 
     for name in optional_names:
@@ -145,6 +150,12 @@ if __name__ == "__main__":
     fred_file = export_fred_data()
     if fred_file is not None:
         files.append(fred_file)
+
+    print("\nRe-running XGBoost forecasts on the freshly exported data...")
+    try:
+        run_forecasts.main(export_dir=EXPORT_DIR)
+    except Exception as exc:
+        print(f"  WARNING: forecast batch run failed, skipping forecast exports: {exc}")
 
     add_optional_exports(files)
 
