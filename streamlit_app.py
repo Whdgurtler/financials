@@ -478,23 +478,14 @@ if "reporting_scope" not in st.session_state:
 if st.session_state.reporting_scope not in scope_data:
     st.session_state.reporting_scope = "BHC (Y-9C)"
 
-active_fin_raw, active_inst_df = scope_data[st.session_state.reporting_scope]
-fin_q = _convert_ytd_to_quarterly(active_fin_raw)
-inst_opts = _institution_options(active_fin_raw, active_inst_df)
-inst_names = inst_opts["display"].tolist()
-name_to_rssd = dict(zip(inst_opts["display"], inst_opts["rssd_id"]))
-quarter_choices = _available_quarters(active_fin_raw)
-fred_series = _fred_series_map(fred_df)
-model_panel = _model_panel(fin_q, active_inst_df, fred_df)
-
-# Session state
-if "selected_institution" not in st.session_state:
-    default = next((n for n in inst_names if "usaa" in n.lower()), inst_names[0])
-    st.session_state.selected_institution = default
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Sidebar
 # ─────────────────────────────────────────────────────────────────────────────
+# NOTE: the scope selectbox must be rendered (and session_state updated) BEFORE
+# any data is derived from st.session_state.reporting_scope. Otherwise the rest
+# of this run would use the *previous* scope's data while the header/caption
+# already reflects the newly selected scope, producing a one-run-stale mismatch
+# (e.g. "Bank (Call Report)" label shown alongside BHC institutions/values).
 with st.sidebar:
     st.markdown("## 🏦 Controls")
 
@@ -506,7 +497,26 @@ with st.sidebar:
         index=scope_idx,
         help="Switch between holding company Y-9C data and optional bank-level data if available.",
     )
+    if selected_scope != st.session_state.reporting_scope:
+        # Scope changed: drop the stale institution selection so the default
+        # for the new scope is recomputed below instead of raising a
+        # ValueError (or silently reusing an institution name that doesn't
+        # exist in the new scope).
+        st.session_state.pop("selected_institution", None)
     st.session_state.reporting_scope = selected_scope
+
+    active_fin_raw, active_inst_df = scope_data[st.session_state.reporting_scope]
+    fin_q = _convert_ytd_to_quarterly(active_fin_raw)
+    inst_opts = _institution_options(active_fin_raw, active_inst_df)
+    inst_names = inst_opts["display"].tolist()
+    name_to_rssd = dict(zip(inst_opts["display"], inst_opts["rssd_id"]))
+    quarter_choices = _available_quarters(active_fin_raw)
+    fred_series = _fred_series_map(fred_df)
+    model_panel = _model_panel(fin_q, active_inst_df, fred_df)
+
+    if "selected_institution" not in st.session_state or st.session_state.selected_institution not in inst_names:
+        default = next((n for n in inst_names if "usaa" in n.lower()), inst_names[0])
+        st.session_state.selected_institution = default
 
     sel_inst = st.selectbox(
         "Institution",
