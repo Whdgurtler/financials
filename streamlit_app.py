@@ -21,6 +21,7 @@ from src.y9c.forecasting import (
     HORIZON_LABELS,
     MODEL_LABELS,
     build_model_panel,
+    convert_ytd_to_quarterly,
     run_forecast,
     statement_targets,
 )
@@ -256,13 +257,7 @@ def _precomputed_forecast(
 
 @st.cache_data(show_spinner="Transforming YTD → quarterly…")
 def _convert_ytd_to_quarterly(fin: pd.DataFrame) -> pd.DataFrame:
-    """Convert Y-9C income statement YTD values to quarterly deltas."""
-    mask = fin["statement_type"] == "income_statement"
-    income = fin[mask].copy().sort_values(["rssd_id", "mdrm_code", "year", "quarter"])
-    income["value"] = income.groupby(["rssd_id", "mdrm_code", "year"])["value"].transform(
-        lambda s: s.diff().fillna(s)
-    )
-    return pd.concat([fin[~mask], income], ignore_index=True)
+    return convert_ytd_to_quarterly(fin)
 
 
 @st.cache_data(show_spinner=False)
@@ -746,6 +741,16 @@ with tab_call_report:
         deposits = _point_value("BHDM6636", sel_year, sel_qtr)
         equity = _point_value("BHCK3210", sel_year, sel_qtr)
         net_income = _point_value("BHCK4301", sel_year, sel_qtr)
+        interest_income = _point_value("BHCK4010", sel_year, sel_qtr)
+        interest_expense = _point_value("BHCK4073", sel_year, sel_qtr)
+        net_interest_income = _point_value("BHCK4074", sel_year, sel_qtr)
+        noninterest_income = _point_value("BHCK4079", sel_year, sel_qtr)
+        noninterest_expense = _point_value("BHCK4093", sel_year, sel_qtr)
+        borrowing_codes = ["BHDMB993", "BHCKB995", "BHCK2332", "BHCKB571"]
+        borrowing_values = [_point_value(c, sel_year, sel_qtr) for c in borrowing_codes]
+        borrowings = sum(v for v in borrowing_values if v is not None) if any(
+            v is not None for v in borrowing_values
+        ) else None
         cap_year, cap_qtr = sel_year, sel_qtr
         cap_tier1_risk = _point_value("FDIC_RBC1AAJ", cap_year, cap_qtr)
         cap_total_risk = _point_value("FDIC_RBCRWAJ", cap_year, cap_qtr)
@@ -801,6 +806,69 @@ with tab_call_report:
                 "**MDRM codes:** BHCK4301 ÷ BHCK2170\n\n"
                 "Quarterly net income is annualized (×4) then divided by total assets to estimate "
                 "full-year Return on Assets — a core profitability measure."
+            ),
+        )
+
+        st.markdown('<div class="sec-header">Profitability &amp; Efficiency Ratios</div>', unsafe_allow_html=True)
+        pe1, pe2, pe3, pe4 = st.columns(4)
+        annualized_roe = _ratio((net_income * 4) if net_income is not None else None, equity)
+        pe1.metric(
+            "ROE (annualized)",
+            f"{annualized_roe:.2f}%" if annualized_roe is not None else "N/A",
+            help=(
+                "**Return on Equity**\n\n"
+                "**Formula:** (Net Income × 4) ÷ Total Equity Capital × 100\n\n"
+                "**MDRM codes:** BHCK4301 ÷ BHCK3210\n\n"
+                "Quarterly net income is annualized (×4) then divided by total equity — how much "
+                "profit is generated per dollar of shareholder capital."
+            ),
+        )
+        rev_base = (
+            (net_interest_income + noninterest_income)
+            if net_interest_income is not None and noninterest_income is not None
+            else None
+        )
+        efficiency_ratio = _ratio(noninterest_expense, rev_base)
+        pe2.metric(
+            "Efficiency Ratio",
+            f"{efficiency_ratio:.2f}%" if efficiency_ratio is not None else "N/A",
+            help=(
+                "**Formula:** Total Noninterest Expense ÷ (Net Interest Income + Total "
+                "Noninterest Income) × 100\n\n"
+                "**MDRM codes:** BHCK4093 ÷ (BHCK4074 + BHCK4079)\n\n"
+                "Overhead cost as a share of total revenue. Lower is better — indicates fewer "
+                "dollars of expense needed to generate each dollar of revenue."
+            ),
+        )
+        annualized_asset_yield = _ratio((interest_income * 4) if interest_income is not None else None, assets)
+        pe3.metric(
+            "Asset Yield",
+            f"{annualized_asset_yield:.2f}%" if annualized_asset_yield is not None else "N/A",
+            help=(
+                "**Formula:** (Total Interest Income × 4) ÷ Total Assets × 100\n\n"
+                "**MDRM codes:** BHCK4010 ÷ BHCK2170\n\n"
+                "Annualized interest income earned relative to total assets — a proxy for the "
+                "average yield generated on the earning-asset base."
+            ),
+        )
+        funding_base = (
+            (deposits + borrowings)
+            if deposits is not None and borrowings is not None
+            else deposits
+        )
+        annualized_funding_cost = _ratio(
+            (interest_expense * 4) if interest_expense is not None else None, funding_base
+        )
+        pe4.metric(
+            "Deposit/Borrowing Expense Ratio",
+            f"{annualized_funding_cost:.2f}%" if annualized_funding_cost is not None else "N/A",
+            help=(
+                "**Formula:** (Total Interest Expense × 4) ÷ (Deposits + Borrowings) × 100\n\n"
+                "**MDRM codes:** BHCK4073 ÷ (BHDM6636 + BHDMB993 + BHCKB995 + BHCK2332 + "
+                "BHCKB571)\n\n"
+                "Annualized cost of funds — interest expense relative to interest-bearing "
+                "deposits and borrowed money (fed funds purchased, repos, and other borrowed "
+                "money)."
             ),
         )
 

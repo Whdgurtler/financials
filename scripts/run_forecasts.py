@@ -39,6 +39,7 @@ from src.y9c.forecasting import (
     HORIZON_LABELS,
     MODEL_LABELS,
     build_model_panel,
+    convert_ytd_to_quarterly,
     run_forecast,
 )
 
@@ -115,7 +116,7 @@ def main(export_dir: Path = EXPORT_DIR, max_folds: int = 8, processes: int | Non
     fred_path = export_dir / "fred_data.parquet"
     fred = pd.read_parquet(fred_path) if fred_path.exists() else pd.DataFrame({"report_date": pd.Series(dtype="datetime64[ns]")})
 
-    panel = build_model_panel(fin, inst, fred)
+    panel = build_model_panel(convert_ytd_to_quarterly(fin), inst, fred)
     horizons = list(HORIZON_LABELS.values())
     rssd_ids = panel["rssd_id"].unique().tolist()
 

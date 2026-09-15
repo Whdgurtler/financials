@@ -93,6 +93,19 @@ def statement_targets(panel_df: pd.DataFrame, statement_type: str) -> pd.DataFra
     return pd.DataFrame(rows).sort_values(["category", "account_name"]).reset_index(drop=True)
 
 
+def convert_ytd_to_quarterly(financial_long: pd.DataFrame) -> pd.DataFrame:
+    """Convert cumulative income-statement filings to quarterly observations."""
+    financial = financial_long.copy()
+    mask = financial["statement_type"] == "income_statement"
+    income = financial[mask].copy().sort_values(
+        ["rssd_id", "mdrm_code", "year", "quarter"]
+    )
+    income["value"] = income.groupby(
+        ["rssd_id", "mdrm_code", "year"]
+    )["value"].transform(lambda values: values.diff().fillna(values))
+    return pd.concat([financial[~mask], income], ignore_index=True)
+
+
 def build_model_panel(
     financial_long: pd.DataFrame,
     institutions: pd.DataFrame,
@@ -199,7 +212,16 @@ def _prepare_problem(
         raise ValueError(f"No data found for RSSD {rssd_id}")
 
     keep_cols = ["report_date", "year", "quarter"] + predictor_codes + fred_cols
-    bank = bank[keep_cols].copy()
+    bank = bank[keep_cols].drop_duplicates("report_date").copy()
+    bank["report_date"] = pd.to_datetime(bank["report_date"])
+    report_start = bank["report_date"].min()
+    report_end = bank["report_date"].max()
+    bank = bank.set_index("report_date").reindex(
+        pd.date_range(report_start, report_end, freq="QE")
+    ).rename_axis("report_date").reset_index()
+    periods = bank["report_date"].dt.to_period("Q")
+    bank["year"] = periods.dt.year
+    bank["quarter"] = periods.dt.quarter
 
     feature_frame = bank[["report_date", "year", "quarter"] + fred_cols].copy()
     for code in predictor_codes:
