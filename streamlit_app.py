@@ -12,11 +12,9 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
-from sklearn.preprocessing import StandardScaler
-from sklearn.cluster import KMeans
-from sklearn.decomposition import PCA
 
 from src.y9c.forecasting import (
+    CORE_PREDICTORS,
     ForecastResult,
     HORIZON_LABELS,
     MODEL_LABELS,
@@ -25,6 +23,7 @@ from src.y9c.forecasting import (
     run_forecast,
     statement_targets,
 )
+from src.y9c.config import get_all_mdrm_codes
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Page config  (must be the very first Streamlit call)
@@ -114,6 +113,12 @@ METRIC_CHOICES: list[tuple[str, str]] = [
     ("Applicable Income Taxes",         "BHCK4302"),
 ]
 NAME_TO_MDRM: dict[str, str] = {n: m for n, m in METRIC_CHOICES}
+MDRM_ACCOUNT_NAMES: dict[str, str] = {
+    code: info["description"] for code, info in get_all_mdrm_codes().items()
+}
+MDRM_STATEMENT_TYPES: dict[str, str] = {
+    code: info["statement"] for code, info in get_all_mdrm_codes().items()
+}
 
 KEY_METRICS = [
     ("BHCK2170", "Total Assets"),
@@ -146,26 +151,31 @@ CALL_REPORT_CAPITAL_METRICS: list[tuple[str, str]] = [
 
 CALL_REPORT_NAME_TO_MDRM: dict[str, str] = {n: m for n, m in CALL_REPORT_METRICS}
 
-CLUSTER_FEATURE_DEFAULTS = [
-    "Total Assets", "Net Loans & Leases", "Total Equity",
-    "Net Interest Income", "Total Noninterest Income", "Net Income",
-]
-
 COLORS = ["#3b82f6", "#a855f7", "#f59e0b", "#ef4444", "#10b981",
           "#06b6d4", "#ec4899", "#8b5cf6", "#14b8a6", "#f97316"]
 
 PLOTLY_BASE = dict(
-    template="plotly_dark",
-    paper_bgcolor="rgba(0,0,0,0)",
-    plot_bgcolor="rgba(15,30,60,0.4)",
-    font=dict(family="Inter, system-ui, sans-serif", size=12, color="#cbd5e1"),
-    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
-                bgcolor="rgba(0,0,0,0)", font=dict(size=11)),
-    margin=dict(l=55, r=20, t=55, b=45),
+    template="plotly_white",
+    paper_bgcolor="#ffffff",
+    plot_bgcolor="#ffffff",
+    font=dict(family="Aptos, Segoe UI, sans-serif", size=12, color="#334155"),
+    legend=dict(
+        orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0,
+        bgcolor="rgba(0,0,0,0)", font=dict(size=11, color="#475569"),
+        itemwidth=70,
+    ),
+    margin=dict(l=58, r=20, t=62, b=52),
     height=360,
     hovermode="x unified",
-    xaxis=dict(showgrid=False, zeroline=False),
-    yaxis=dict(showgrid=True, gridcolor="#1e293b", zeroline=False),
+    hoverlabel=dict(bgcolor="#0f172a", bordercolor="#0f172a", font=dict(color="#f8fafc", size=12)),
+    xaxis=dict(
+        showgrid=False, zeroline=False, showline=True, linecolor="#cbd5e1",
+        tickfont=dict(color="#64748b", size=11), ticks="outside", ticklen=4,
+    ),
+    yaxis=dict(
+        showgrid=True, gridcolor="#e2e8f0", gridwidth=1, zeroline=False,
+        showline=False, tickfont=dict(color="#64748b", size=11), ticks="",
+    ),
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -322,18 +332,28 @@ def _cached_forecast(
     target_code: str,
     model_name: str,
     horizon_quarters: int,
+    n_lags: int,
+    predictor_codes: tuple[str, ...],
+    economic_columns: tuple[str, ...],
 ):
-    precomputed = _precomputed_forecast(
-        _load_forecast_store(), rssd_id, target_code, model_name, horizon_quarters
-    )
-    if precomputed is not None:
-        return precomputed
+    statement_type = MDRM_STATEMENT_TYPES.get(target_code, "income_statement")
+    default_predictors = tuple(code for code in CORE_PREDICTORS[statement_type] if code in panel_df.columns)
+    default_economic = tuple(_fred_columns_for_panel(panel_df))
+    if n_lags == 4 and predictor_codes == default_predictors and economic_columns == default_economic:
+        precomputed = _precomputed_forecast(
+            _load_forecast_store(), rssd_id, target_code, model_name, horizon_quarters
+        )
+        if precomputed is not None:
+            return precomputed
     return run_forecast(
         panel_df=panel_df,
         rssd_id=rssd_id,
         target_code=target_code,
         model_name=model_name,
         horizon_quarters=horizon_quarters,
+        n_lags=n_lags,
+        predictor_codes=list(predictor_codes),
+        economic_columns=list(economic_columns),
     )
 
 
@@ -343,17 +363,21 @@ def _cached_monitoring(
     rssd_id: str,
     target_code: str,
     model_name: str,
+    n_lags: int,
+    predictor_codes: tuple[str, ...],
+    economic_columns: tuple[str, ...],
 ):
-    store = _load_forecast_store()
     results = {}
     for horizon in HORIZON_LABELS.values():
-        precomputed = _precomputed_forecast(store, rssd_id, target_code, model_name, horizon)
-        results[horizon] = precomputed if precomputed is not None else run_forecast(
-            panel_df=panel_df,
-            rssd_id=rssd_id,
-            target_code=target_code,
-            model_name=model_name,
-            horizon_quarters=horizon,
+        results[horizon] = _cached_forecast(
+            panel_df,
+            rssd_id,
+            target_code,
+            model_name,
+            horizon,
+            n_lags,
+            predictor_codes,
+            economic_columns,
         )
     return results
 
@@ -363,73 +387,25 @@ def _statement_target_frame(panel_df: pd.DataFrame, statement_type: str) -> pd.D
     return statement_targets(panel_df, statement_type)
 
 
-@st.cache_data(show_spinner="Computing clusters…")
-def _compute_clusters(
-    _fin_q: pd.DataFrame,
-    _inst_df: pd.DataFrame,
-    quarter_str: str,
-    feature_names: tuple[str, ...],
-    k: int,
-) -> tuple[pd.DataFrame, float, float]:
-    """Cross-sectional KMeans + PCA on all institutions for a given quarter."""
-    parts = quarter_str.split()
-    cy, cq = int(parts[0]), int(parts[1][1])
-    mdrms = [NAME_TO_MDRM[n] for n in feature_names if n in NAME_TO_MDRM]
+def _fred_columns_for_panel(panel_df: pd.DataFrame) -> list[str]:
+    metadata = {"rssd_id", "institution_name", "report_date", "year", "quarter"}
+    return [column for column in panel_df.columns if column not in metadata and column not in MDRM_ACCOUNT_NAMES]
 
-    snap = _fin_q[
-        (_fin_q["year"] == cy) & (_fin_q["quarter"] == cq) &
-        (_fin_q["mdrm_code"].isin(mdrms))
-    ][["rssd_id", "mdrm_code", "value"]].copy()
 
-    wide = snap.pivot_table(index="rssd_id", columns="mdrm_code", values="value", aggfunc="first")
-    # Rename columns to human-readable names
-    wide.columns = [
-        next((n for n, m in METRIC_CHOICES if m == c), c) for c in wide.columns
-    ]
-    # Drop extremely sparse rows
-    wide = wide.dropna(thresh=max(1, len(feature_names) // 2))
-
-    # Attach display names via dict lookup (avoids index-clobbering merges)
-    name_map = dict(zip(_inst_df["rssd_id"], _inst_df["name"]))
-
-    if len(wide) < 2:
-        wide["display_name"] = [name_map.get(rid, str(rid)) for rid in wide.index]
-        wide["cluster"] = 0
-        wide["pc1"] = 0.0
-        wide["pc2"] = 0.0
-        assets_q = _fin_q[
-            (_fin_q["year"] == cy) & (_fin_q["quarter"] == cq) &
-            (_fin_q["mdrm_code"] == "BHCK2170")
-        ]
-        assets_map = dict(zip(assets_q["rssd_id"], assets_q["value"]))
-        wide["total_assets"] = [assets_map.get(rid, np.nan) for rid in wide.index]
-        return wide, float("nan"), float("nan")
-
-    k = min(k, len(wide))
-
-    wide["display_name"] = [name_map.get(rid, str(rid)) for rid in wide.index]
-
-    feat_cols = [c for c in wide.columns if c not in ("display_name",)]
-    X = wide[feat_cols].fillna(0).values
-    Xs = StandardScaler().fit_transform(X)
-
-    km = KMeans(n_clusters=k, n_init=20, random_state=42)
-    wide["cluster"] = km.fit_predict(Xs)
-
-    pca = PCA(n_components=2, random_state=42)
-    coords = pca.fit_transform(Xs)
-    ev = pca.explained_variance_ratio_
-    wide["pc1"], wide["pc2"] = coords[:, 0], coords[:, 1]
-
-    # Add total assets for marker sizing via dict lookup
-    assets_q = _fin_q[
-        (_fin_q["year"] == cy) & (_fin_q["quarter"] == cq) &
-        (_fin_q["mdrm_code"] == "BHCK2170")
-    ]
-    assets_map = dict(zip(assets_q["rssd_id"], assets_q["value"]))
-    wide["total_assets"] = [assets_map.get(rid, np.nan) for rid in wide.index]
-
-    return wide, float(ev[0]), float(ev[1])
+def _feature_display_name(feature: str) -> str:
+    if feature in {"quarter_sin", "quarter_cos"}:
+        return "Quarterly seasonality"
+    base, separator, transform = feature.partition("__")
+    label = MDRM_ACCOUNT_NAMES.get(base, base)
+    if not separator:
+        return label
+    if transform.startswith("lag"):
+        return f"{label} · {transform.removeprefix('lag')}Q lag"
+    if transform == "roll4":
+        return f"{label} · 4Q rolling average"
+    if transform == "roll8":
+        return f"{label} · 8Q rolling average"
+    return label
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -491,17 +467,23 @@ def timeseries_fig(
         fig.add_trace(go.Scatter(
             x=lbl, y=md["value"] / 1e6,
             mode="lines+markers", name=name,
-            line=dict(color=COLORS[i % len(COLORS)], width=2),
-            marker=dict(size=4),
+            line=dict(color=COLORS[i % len(COLORS)], width=2.5, shape="spline", smoothing=0.35),
+            marker=dict(size=5, color=COLORS[i % len(COLORS)], line=dict(color="#ffffff", width=1.5)),
+            hovertemplate=f"<b>{name}</b><br>%{{y:,.2f}}B<extra></extra>",
         ))
     sel_lbl = f"{sel_year} Q{sel_qtr}"
     if sel_lbl in x_labels:
-        idx = x_labels.index(sel_lbl)
-        fig.add_vline(x=idx, line=dict(color="#f59e0b", width=1.5, dash="dot"),
-                      annotation_text="◄ selected", annotation_position="top right",
-                      annotation_font=dict(color="#f59e0b", size=10))
+        fig.add_vline(
+            x=sel_lbl, line=dict(color="#f59e0b", width=1.5, dash="dot"),
+            annotation_text=f"As of {sel_lbl}", annotation_position="top right",
+            annotation_font=dict(color="#b45309", size=10),
+        )
     layout = {**PLOTLY_BASE, "height": height}
-    fig.update_layout(title=dict(text=title, font=dict(size=14)), yaxis_title="$ Billions", **layout)
+    fig.update_layout(
+        title=dict(text=title, x=0, xanchor="left", font=dict(size=15, color="#1e293b")),
+        yaxis_title="$ Billions", yaxis_title_font=dict(size=11, color="#64748b"),
+        **layout,
+    )
     return fig
 
 
@@ -520,10 +502,23 @@ def yoy_bar_fig(
         cur_vals.append(float(c.values[0]) / 1e6 if len(c) > 0 else 0.0)
         pri_vals.append(float(p.values[0]) / 1e6 if len(p) > 0 else 0.0)
     fig = go.Figure()
-    fig.add_trace(go.Bar(name=f"{year - 1} Q{qtr}", x=names, y=pri_vals, marker_color="#475569"))
-    fig.add_trace(go.Bar(name=f"{year} Q{qtr}",     x=names, y=cur_vals, marker_color="#3b82f6"))
+    fig.add_trace(go.Bar(
+        name=f"{year - 1} Q{qtr}", x=names, y=pri_vals,
+        marker_color="#cbd5e1", marker_line_width=0,
+        hovertemplate=f"<b>{year - 1} Q{qtr}</b><br>%{{x}}: %{{y:,.2f}}B<extra></extra>",
+    ))
+    fig.add_trace(go.Bar(
+        name=f"{year} Q{qtr}", x=names, y=cur_vals,
+        marker_color="#2563eb", marker_line_width=0,
+        hovertemplate=f"<b>{year} Q{qtr}</b><br>%{{x}}: %{{y:,.2f}}B<extra></extra>",
+    ))
     layout = {**PLOTLY_BASE, "height": 320, "barmode": "group"}
-    fig.update_layout(title=dict(text=title, font=dict(size=14)), yaxis_title="$ Billions", **layout)
+    fig.update_layout(
+        title=dict(text=title, x=0, xanchor="left", font=dict(size=15, color="#1e293b")),
+        yaxis_title="$ Billions", yaxis_title_font=dict(size=11, color="#64748b"),
+        xaxis=dict(tickangle=-25, showgrid=False),
+        **layout,
+    )
     return fig
 
 
@@ -623,10 +618,9 @@ st.markdown(f"""
 # ─────────────────────────────────────────────────────────────────────────────
 # Main tabs
 # ─────────────────────────────────────────────────────────────────────────────
-tab_overview, tab_call_report, tab_cluster, tab_custom, tab_fred, tab_models, tab_monitoring, tab_tables = st.tabs([
+tab_overview, tab_call_report, tab_custom, tab_fred, tab_models, tab_monitoring, tab_tables = st.tabs([
     "📊 Overview",
     "🏛 Call Report",
-    "🔬 Cluster Analysis",
     "📈 Custom Charts",
     "🌐 Economic Context",
     "🤖 Model Forecasts",
@@ -1000,165 +994,7 @@ with tab_call_report:
             st.plotly_chart(fig_mix, use_container_width=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TAB 3 — CLUSTER ANALYSIS
-# ══════════════════════════════════════════════════════════════════════════════
-with tab_cluster:
-    st.markdown('<div class="sec-header">Peer Cluster Analysis</div>', unsafe_allow_html=True)
-    st.caption(
-        "All institutions are clustered by financial profile using K-Means on the selected metrics, "
-        "then projected to 2-D via PCA. The ★ marks the currently selected institution. "
-        "**Click any point** to load that institution across all tabs."
-    )
-
-    fc1, fc2, fc3 = st.columns([3, 1, 1])
-    with fc1:
-        cluster_features = st.multiselect(
-            "Clustering features",
-            options=[n for n, _ in METRIC_CHOICES],
-            default=CLUSTER_FEATURE_DEFAULTS,
-            key="cluster_feat",
-        )
-    with fc2:
-        cluster_qtr_str = st.selectbox("Cluster as-of", quarter_choices, index=0, key="cluster_qtr")
-    with fc3:
-        n_clusters = st.slider("# Clusters (k)", 2, 8, 4, key="n_clusters")
-
-    if len(cluster_features) < 2:
-        st.info("Select at least 2 features to enable clustering.")
-    else:
-        cdf, ev1, ev2 = _compute_clusters(
-            fin_q, active_inst_df,
-            cluster_qtr_str,
-            tuple(cluster_features),
-            n_clusters,
-        )
-
-        if len(cdf) < 2:
-            st.info(
-                "Not enough institutions with complete values for the selected quarter and features to run clustering. "
-                "Try fewer features or a different quarter."
-            )
-        else:
-            cdf["cluster_label"] = "Cluster " + (cdf["cluster"] + 1).astype(str)
-            # Marker size proportional to sqrt(assets), default to 1 if missing
-            ta = cdf["total_assets"].fillna(1e6) if "total_assets" in cdf.columns else pd.Series(1e6, index=cdf.index)
-            cdf["_sz"] = np.sqrt(np.clip(ta / 1e6, 0.5, 2000))
-
-            # Build scatter
-            fig_cl = px.scatter(
-                cdf.reset_index(),
-                x="pc1", y="pc2",
-                color="cluster_label",
-                size="_sz",
-                size_max=45,
-                hover_name="display_name",
-                custom_data=["display_name"],
-                color_discrete_sequence=px.colors.qualitative.Set2,
-                labels={
-                    "pc1": f"PC 1 · {ev1 * 100:.1f}% variance explained" if pd.notna(ev1) else "PC 1",
-                    "pc2": f"PC 2 · {ev2 * 100:.1f}% variance explained" if pd.notna(ev2) else "PC 2",
-                    "cluster_label": "Cluster",
-                },
-                title=f"Institution Clusters — {cluster_qtr_str}  (k={n_clusters}, PCA projection)",
-            )
-
-            # Star for the currently selected institution
-            if rssd in cdf.index:
-                row = cdf.loc[rssd]
-                fig_cl.add_trace(go.Scatter(
-                    x=[row["pc1"]], y=[row["pc2"]],
-                    mode="markers+text",
-                    marker=dict(symbol="star", size=20, color="#f59e0b",
-                                line=dict(color="white", width=1.5)),
-                    text=[sel_inst.split()[-1]],
-                    textposition="top center",
-                    textfont=dict(color="#f59e0b", size=10),
-                    name=f"★ {sel_inst}",
-                    customdata=[[sel_inst]],
-                    showlegend=True,
-                ))
-
-            fig_cl.update_layout(
-                **{**PLOTLY_BASE,
-                   "height": 540,
-                   "hovermode": "closest",
-                   "xaxis": dict(showgrid=True, gridcolor="#1e293b", zeroline=True,
-                                 zerolinecolor="#334155", zerolinewidth=1),
-                   "yaxis": dict(showgrid=True, gridcolor="#1e293b", zeroline=True,
-                                 zerolinecolor="#334155", zerolinewidth=1),
-                   },
-            )
-
-            # Render with point-selection support
-            sel_event = st.plotly_chart(
-                fig_cl,
-                use_container_width=True,
-                on_select="rerun",
-                key="cluster_scatter",
-            )
-
-            # Handle click → update selected institution
-            if sel_event and getattr(sel_event, "selection", None):
-                pts = sel_event.selection.points
-                if pts:
-                    pt = pts[0]
-                    cd = pt.get("customdata")
-                    clicked = cd[0] if cd else None
-                    if clicked and clicked in inst_names and clicked != st.session_state.selected_institution:
-                        st.session_state.selected_institution = clicked
-                        st.rerun()
-
-            # ── Cluster summary table ──────────────────────────────────────────
-            st.markdown('<div class="sec-header">Cluster Summary</div>', unsafe_allow_html=True)
-
-            feat_in_df = [f for f in cluster_features if f in cdf.columns]
-            agg_dict: dict = {"# Institutions": ("display_name", "count")}
-            for f in feat_in_df:
-                agg_dict[f"Avg {f}"] = (f, "mean")
-            summary = cdf.groupby("cluster_label").agg(**agg_dict).reset_index()
-            for col in summary.columns:
-                if col.startswith("Avg "):
-                    summary[col] = summary[col].apply(fmt)
-            summary = summary.rename(columns={"cluster_label": "Cluster"})
-            st.dataframe(summary, use_container_width=True, hide_index=True)
-
-            # ── Cluster members explorer ───────────────────────────────────────
-            st.markdown('<div class="sec-header">Cluster Members</div>', unsafe_allow_html=True)
-            cl_filter = st.selectbox(
-                "Show members of",
-                sorted(cdf["cluster_label"].unique()),
-                key="cl_member_filter",
-            )
-            members = cdf[cdf["cluster_label"] == cl_filter].copy()
-            disp_cols = ["display_name", "total_assets"] + feat_in_df
-            disp_cols = [c for c in disp_cols if c in members.columns]
-            members = members[disp_cols].sort_values("total_assets", ascending=False)
-            for col in members.columns:
-                if col not in ("display_name",):
-                    members[col] = members[col].apply(fmt)
-            members = members.rename(columns={"display_name": "Institution", "total_assets": "Total Assets"})
-            st.dataframe(members, use_container_width=True, hide_index=True)
-
-            # ── Cluster scatter heat (PC1 distribution per cluster) ────────────
-            st.markdown('<div class="sec-header">PC1 Distribution by Cluster</div>', unsafe_allow_html=True)
-            fig_box = go.Figure()
-            for i, cl in enumerate(sorted(cdf["cluster_label"].unique())):
-                sub = cdf[cdf["cluster_label"] == cl]
-                fig_box.add_trace(go.Violin(
-                    x=[cl] * len(sub), y=sub["pc1"].values,
-                    name=cl, box_visible=True, meanline_visible=True,
-                    fillcolor=px.colors.qualitative.Set2[i % len(px.colors.qualitative.Set2)],
-                    line_color="white", opacity=0.6,
-                ))
-            fig_box.update_layout(
-                **{**PLOTLY_BASE, "height": 320, "showlegend": False},
-                title="PC 1 Score Distribution per Cluster",
-                xaxis_title="Cluster", yaxis_title="PC 1 Score",
-            )
-            st.plotly_chart(fig_box, use_container_width=True)
-
-# ══════════════════════════════════════════════════════════════════════════════
-# TAB 4 — CUSTOM CHARTS
+# TAB 3 — CUSTOM CHARTS
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_custom:
     st.markdown('<div class="sec-header">Custom Metric Chart</div>', unsafe_allow_html=True)
@@ -1342,7 +1178,7 @@ with tab_models:
                 "Line item",
                 options=model_target_options,
                 index=model_target_options.index(default_model_target),
-                format_func=lambda code: f"{model_targets.loc[model_targets['mdrm_code'] == code, 'account_name'].iloc[0]} ({code})",
+                format_func=lambda code: model_targets.loc[model_targets["mdrm_code"] == code, "account_name"].iloc[0],
                 key="model_target",
             )
         with mf3:
@@ -1359,6 +1195,36 @@ with tab_models:
                 key="model_horizon",
             )
 
+        predictor_options = [
+            code for code in CORE_PREDICTORS[model_statement] if code in model_panel.columns
+        ]
+        economic_options = _fred_columns_for_panel(model_panel)
+        with st.expander("Forecast variables", expanded=False):
+            st.caption(
+                "Choose from curated bank variables and published economic indicators. "
+                "The selected line item's own history is always retained as an autoregressive feature."
+            )
+            selected_predictor_codes = st.multiselect(
+                "Bank variables",
+                options=predictor_options,
+                default=predictor_options,
+                format_func=lambda code: MDRM_ACCOUNT_NAMES.get(code, code),
+                key=f"forecast_predictors_{model_statement}",
+            )
+            selected_economic_columns = st.multiselect(
+                "Economic indicators",
+                options=economic_options,
+                default=economic_options,
+                key="forecast_economic_indicators",
+            )
+            selected_n_lags = st.select_slider(
+                "Historical lag depth",
+                options=[1, 2, 4, 6, 8],
+                value=4,
+                format_func=lambda value: f"{value} quarter{'s' if value != 1 else ''}",
+                key="forecast_lags",
+            )
+
         try:
             forecast_result = _cached_forecast(
                 model_panel,
@@ -1366,6 +1232,9 @@ with tab_models:
                 selected_model_target,
                 selected_model_name,
                 HORIZON_LABELS[selected_horizon_label],
+                selected_n_lags,
+                tuple(selected_predictor_codes),
+                tuple(selected_economic_columns),
             )
 
             actual_series = df[df["mdrm_code"] == selected_model_target].sort_values(["year", "quarter"])
@@ -1439,16 +1308,21 @@ with tab_models:
             with mc2:
                 st.markdown('<div class="sec-header">Top Drivers</div>', unsafe_allow_html=True)
                 top_features = forecast_result.feature_importance.head(12).copy()
+                top_features["feature_label"] = top_features["feature"].map(_feature_display_name)
                 fig_imp = px.bar(
                     top_features.sort_values("importance"),
                     x="importance",
-                    y="feature",
+                    y="feature_label",
                     orientation="h",
                     color="importance",
                     color_continuous_scale="Blues",
-                    title="Feature importance",
+                    title="Top model drivers",
                 )
-                fig_imp.update_layout(**{**PLOTLY_BASE, "height": 420, "showlegend": False})
+                fig_imp.update_layout(
+                    **{**PLOTLY_BASE, "height": 420, "showlegend": False},
+                    xaxis_title="Relative importance",
+                    yaxis_title=None,
+                )
                 st.plotly_chart(fig_imp, use_container_width=True)
 
             st.markdown('<div class="sec-header">Rolling Prediction Details</div>', unsafe_allow_html=True)
@@ -1493,7 +1367,7 @@ with tab_monitoring:
                 "Line item",
                 options=monitoring_target_codes,
                 index=monitoring_target_codes.index(default_monitoring_target),
-                format_func=lambda code: f"{monitoring_targets.loc[monitoring_targets['mdrm_code'] == code, 'account_name'].iloc[0]} ({code})",
+                format_func=lambda code: monitoring_targets.loc[monitoring_targets["mdrm_code"] == code, "account_name"].iloc[0],
                 key="monitoring_target",
             )
         with mon3:
@@ -1504,8 +1378,43 @@ with tab_monitoring:
                 key="monitoring_model",
             )
 
+        monitoring_predictor_options = [
+            code for code in CORE_PREDICTORS[monitoring_statement] if code in model_panel.columns
+        ]
+        monitoring_economic_options = _fred_columns_for_panel(model_panel)
+        with st.expander("Monitoring variables", expanded=False):
+            st.caption("Use the same curated variable controls for rolling validation.")
+            monitoring_predictors = st.multiselect(
+                "Bank variables",
+                options=monitoring_predictor_options,
+                default=monitoring_predictor_options,
+                format_func=lambda code: MDRM_ACCOUNT_NAMES.get(code, code),
+                key=f"monitoring_predictors_{monitoring_statement}",
+            )
+            monitoring_economics = st.multiselect(
+                "Economic indicators",
+                options=monitoring_economic_options,
+                default=monitoring_economic_options,
+                key="monitoring_economic_indicators",
+            )
+            monitoring_lags = st.select_slider(
+                "Historical lag depth",
+                options=[1, 2, 4, 6, 8],
+                value=4,
+                format_func=lambda value: f"{value} quarter{'s' if value != 1 else ''}",
+                key="monitoring_lags",
+            )
+
         try:
-            monitoring_results = _cached_monitoring(model_panel, rssd, monitoring_target, monitoring_model)
+            monitoring_results = _cached_monitoring(
+                model_panel,
+                rssd,
+                monitoring_target,
+                monitoring_model,
+                monitoring_lags,
+                tuple(monitoring_predictors),
+                tuple(monitoring_economics),
+            )
 
             metrics_frames = []
             pred_frames = []

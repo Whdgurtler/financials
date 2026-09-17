@@ -154,8 +154,13 @@ def _fred_columns(panel_df: pd.DataFrame) -> list[str]:
     return [col for col in panel_df.columns if col not in meta_cols and col not in code_cols]
 
 
-def _feature_columns(statement_type: str, target_code: str, panel_df: pd.DataFrame) -> list[str]:
-    predictors = list(CORE_PREDICTORS[statement_type])
+def _feature_columns(
+    statement_type: str,
+    target_code: str,
+    panel_df: pd.DataFrame,
+    predictor_codes: list[str] | None = None,
+) -> list[str]:
+    predictors = list(predictor_codes) if predictor_codes is not None else list(CORE_PREDICTORS[statement_type])
     if target_code not in predictors:
         predictors.append(target_code)
     return [code for code in predictors if code in panel_df.columns]
@@ -197,6 +202,8 @@ def _prepare_problem(
     target_code: str,
     horizon_quarters: int,
     n_lags: int = 4,
+    predictor_codes: list[str] | None = None,
+    economic_columns: list[str] | None = None,
 ) -> tuple[pd.DataFrame, list[str], str, str]:
     code_info = _all_code_info()
     if target_code not in code_info:
@@ -204,8 +211,9 @@ def _prepare_problem(
 
     statement_type = code_info[target_code]["statement"]
     target_name = code_info[target_code]["description"]
-    fred_cols = _fred_columns(panel_df)
-    predictor_codes = _feature_columns(statement_type, target_code, panel_df)
+    available_fred = _fred_columns(panel_df)
+    fred_cols = [col for col in (economic_columns if economic_columns is not None else available_fred) if col in available_fred]
+    predictor_codes = _feature_columns(statement_type, target_code, panel_df, predictor_codes)
 
     bank = panel_df[panel_df["rssd_id"] == rssd_id].sort_values("report_date").copy()
     if bank.empty:
@@ -285,6 +293,8 @@ def run_forecast(
     model_name: str,
     horizon_quarters: int,
     n_lags: int = 4,
+    predictor_codes: list[str] | None = None,
+    economic_columns: list[str] | None = None,
     min_train_size: int = 16,
     max_folds: int | None = None,
     model_n_jobs: int = -1,
@@ -304,6 +314,8 @@ def run_forecast(
         target_code=target_code,
         horizon_quarters=horizon_quarters,
         n_lags=n_lags,
+        predictor_codes=predictor_codes,
+        economic_columns=economic_columns,
     )
 
     train_df = feature_frame.dropna(subset=["target"]).reset_index(drop=True)

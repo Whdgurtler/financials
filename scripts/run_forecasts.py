@@ -36,6 +36,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.y9c.config import get_all_mdrm_codes
 from src.y9c.forecasting import (
+    CORE_PREDICTORS,
     HORIZON_LABELS,
     MODEL_LABELS,
     build_model_panel,
@@ -57,18 +58,22 @@ TOP_IMPORTANCE_FEATURES = 15
 
 
 def _process_institution(args) -> tuple[list, list, list, list]:
-    rssd_id, bank_panel, horizons, max_folds = args
+    rssd_id, bank_panel, horizons, max_folds, n_lags, economic_columns = args
     metrics_rows, prediction_frames, future_frames, importance_frames = [], [], [], []
 
     for target_code in CORE_TARGETS:
         for horizon in horizons:
             try:
+                statement_type = get_all_mdrm_codes()[target_code]["statement"]
                 result = run_forecast(
                     bank_panel,
                     rssd_id,
                     target_code,
                     MODEL_NAME,
                     horizon,
+                    n_lags=n_lags,
+                    predictor_codes=CORE_PREDICTORS[statement_type],
+                    economic_columns=economic_columns,
                     max_folds=max_folds,
                     model_n_jobs=1,
                 )
@@ -110,7 +115,12 @@ def _process_institution(args) -> tuple[list, list, list, list]:
     return metrics_rows, prediction_frames, future_frames, importance_frames
 
 
-def main(export_dir: Path = EXPORT_DIR, max_folds: int = 8, processes: int | None = None) -> list[Path]:
+def main(
+    export_dir: Path = EXPORT_DIR,
+    max_folds: int = 8,
+    processes: int | None = None,
+    n_lags: int = 4,
+) -> list[Path]:
     fin = pd.read_parquet(export_dir / "financial_data.parquet")
     inst = pd.read_parquet(export_dir / "institutions.parquet")
     fred_path = export_dir / "fred_data.parquet"
@@ -119,11 +129,23 @@ def main(export_dir: Path = EXPORT_DIR, max_folds: int = 8, processes: int | Non
     panel = build_model_panel(convert_ytd_to_quarterly(fin), inst, fred)
     horizons = list(HORIZON_LABELS.values())
     rssd_ids = panel["rssd_id"].unique().tolist()
+    economic_columns = [column for column in fred.columns if column != "report_date"]
 
-    print(f"Batch forecasting {len(rssd_ids)} institutions x {len(CORE_TARGETS)} core targets x {len(horizons)} horizons ({MODEL_NAME})...")
+    print(
+        f"Batch forecasting {len(rssd_ids)} institutions x {len(CORE_TARGETS)} core targets "
+        f"x {len(horizons)} horizons ({MODEL_NAME}, {n_lags} lags, "
+        f"{len(economic_columns)} economic indicators)..."
+    )
 
     tasks = [
-        (rssd_id, panel[panel["rssd_id"] == rssd_id].copy(), horizons, max_folds)
+        (
+            rssd_id,
+            panel[panel["rssd_id"] == rssd_id].copy(),
+            horizons,
+            max_folds,
+            n_lags,
+            economic_columns,
+        )
         for rssd_id in rssd_ids
     ]
 
@@ -177,6 +199,7 @@ if __name__ == "__main__":
     parser.add_argument("--export-dir", type=Path, default=EXPORT_DIR)
     parser.add_argument("--max-folds", type=int, default=8, help="Cap the walk-forward backtest to the most recent N folds per (institution, target, horizon).")
     parser.add_argument("--processes", type=int, default=None, help="Worker processes (default: CPU count - 1).")
+    parser.add_argument("--n-lags", type=int, default=4, help="Number of quarterly lags used as bank features.")
     args = parser.parse_args()
 
-    main(export_dir=args.export_dir, max_folds=args.max_folds, processes=args.processes)
+    main(export_dir=args.export_dir, max_folds=args.max_folds, processes=args.processes, n_lags=args.n_lags)

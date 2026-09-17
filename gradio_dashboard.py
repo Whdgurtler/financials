@@ -168,25 +168,6 @@ def create_timeseries_chart(df, metrics, title, selected_year, selected_quarter,
                 marker=dict(size=6)
             ))
 
-    # Add vertical line for selected quarter using shape (works with categorical x-axis)
-    selected_label = f"{selected_year} Q{selected_quarter}"
-    if selected_label in x_labels:
-        selected_idx = x_labels.index(selected_label)
-        fig.add_shape(
-            type="line",
-            x0=selected_idx, x1=selected_idx,
-            y0=0, y1=1,
-            yref="paper",
-            line=dict(color="red", width=2, dash="dash")
-        )
-        fig.add_annotation(
-            x=selected_idx, y=1.05,
-            yref="paper",
-            text="Selected",
-            showarrow=False,
-            font=dict(color="red", size=10)
-        )
-
     fig.update_layout(
         title=dict(text=title, font=dict(size=16)),
         xaxis_title="Quarter",
@@ -623,10 +604,26 @@ def create_dashboard():
     )
 
     css = """
-    .gradio-container { max-width: 100% !important; width: 100% !important; padding: 0 16px !important; }
+    html, body, .app, gradio-app { width: 100% !important; max-width: 100% !important; color-scheme: light !important; }
+    .gradio-container, [class*="gradio-container"] {
+        max-width: 100% !important;
+        width: 100% !important;
+        padding: 0 16px !important;
+        background: #ffffff !important;
+        color-scheme: light !important;
+    }
+    .gradio-container .main, .gradio-container > .wrap {
+        max-width: 100% !important;
+        width: 100% !important;
+    }
     footer { display: none !important; }
     """
-    with gr.Blocks(title="Bank Holding Company Y-9C Dashboard", fill_width=True, css=css) as demo:
+    with gr.Blocks(
+        title="Bank Holding Company Y-9C Dashboard",
+        fill_width=True,
+        css=css,
+        theme=gr.themes.Soft(),
+    ) as demo:
         gr.Markdown("# Bank Holding Company Financial Dashboard\n### FR Y-9C Regulatory Data Analysis")
 
         with gr.Row():
