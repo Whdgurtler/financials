@@ -19,6 +19,7 @@ from src.y9c.forecasting import (
     HORIZON_LABELS,
     MODEL_LABELS,
     build_model_panel,
+    candidate_feature_plan,
     convert_ytd_to_quarterly,
     run_forecast,
     statement_targets,
@@ -41,6 +42,13 @@ st.set_page_config(
 st.markdown("""
 <style>
   #MainMenu, footer, header {visibility: hidden;}
+
+    [data-testid="stAppViewContainer"] > .main .block-container {
+        max-width: none !important;
+        width: 100% !important;
+        padding-left: 2rem !important;
+        padding-right: 2rem !important;
+    }
 
   .app-header {
     background: linear-gradient(135deg, #1a1a2e 0%, #16213e 55%, #0f3460 100%);
@@ -336,9 +344,9 @@ def _cached_forecast(
     predictor_codes: tuple[str, ...],
     economic_columns: tuple[str, ...],
 ):
-    statement_type = MDRM_STATEMENT_TYPES.get(target_code, "income_statement")
-    default_predictors = tuple(code for code in CORE_PREDICTORS[statement_type] if code in panel_df.columns)
-    default_economic = tuple(_fred_columns_for_panel(panel_df))
+    default_predictors, default_economic_list = candidate_feature_plan(target_code, panel_df)
+    default_predictors = tuple(default_predictors)
+    default_economic = tuple(default_economic_list)
     if n_lags == 4 and predictor_codes == default_predictors and economic_columns == default_economic:
         precomputed = _precomputed_forecast(
             _load_forecast_store(), rssd_id, target_code, model_name, horizon_quarters
@@ -399,6 +407,8 @@ def _feature_display_name(feature: str) -> str:
     label = MDRM_ACCOUNT_NAMES.get(base, base)
     if not separator:
         return label
+    if transform == "current":
+        return f"{label} · current quarter"
     if transform.startswith("lag"):
         return f"{label} · {transform.removeprefix('lag')}Q lag"
     if transform == "roll4":
@@ -473,10 +483,17 @@ def timeseries_fig(
         ))
     sel_lbl = f"{sel_year} Q{sel_qtr}"
     if sel_lbl in x_labels:
-        fig.add_vline(
-            x=sel_lbl, line=dict(color="#f59e0b", width=1.5, dash="dot"),
-            annotation_text=f"As of {sel_lbl}", annotation_position="top right",
-            annotation_font=dict(color="#b45309", size=10),
+        # add_vline's annotation helper errors on categorical x-axes (plotly bug), so
+        # add the marker line + label manually instead of via add_vline(annotation_text=...).
+        fig.add_shape(
+            type="line", xref="x", yref="paper",
+            x0=sel_lbl, x1=sel_lbl, y0=0, y1=1,
+            line=dict(color="#f59e0b", width=1.5, dash="dot"),
+        )
+        fig.add_annotation(
+            x=sel_lbl, y=1.02, yref="paper", xref="x",
+            text=f"As of {sel_lbl}", showarrow=False,
+            font=dict(color="#b45309", size=10),
         )
     layout = {**PLOTLY_BASE, "height": height}
     fig.update_layout(
@@ -512,11 +529,15 @@ def yoy_bar_fig(
         marker_color="#2563eb", marker_line_width=0,
         hovertemplate=f"<b>{year} Q{qtr}</b><br>%{{x}}: %{{y:,.2f}}B<extra></extra>",
     ))
-    layout = {**PLOTLY_BASE, "height": 320, "barmode": "group"}
+    layout = {
+        **PLOTLY_BASE,
+        "height": 320,
+        "barmode": "group",
+        "xaxis": {**PLOTLY_BASE["xaxis"], "tickangle": -25, "showgrid": False},
+    }
     fig.update_layout(
         title=dict(text=title, x=0, xanchor="left", font=dict(size=15, color="#1e293b")),
         yaxis_title="$ Billions", yaxis_title_font=dict(size=11, color="#64748b"),
-        xaxis=dict(tickangle=-25, showgrid=False),
         **layout,
     )
     return fig
@@ -1195,10 +1216,7 @@ with tab_models:
                 key="model_horizon",
             )
 
-        predictor_options = [
-            code for code in CORE_PREDICTORS[model_statement] if code in model_panel.columns
-        ]
-        economic_options = _fred_columns_for_panel(model_panel)
+        predictor_options, economic_options = candidate_feature_plan(selected_model_target, model_panel)
         with st.expander("Forecast variables", expanded=False):
             st.caption(
                 "Choose from curated bank variables and published economic indicators. "
@@ -1378,10 +1396,7 @@ with tab_monitoring:
                 key="monitoring_model",
             )
 
-        monitoring_predictor_options = [
-            code for code in CORE_PREDICTORS[monitoring_statement] if code in model_panel.columns
-        ]
-        monitoring_economic_options = _fred_columns_for_panel(model_panel)
+        monitoring_predictor_options, monitoring_economic_options = candidate_feature_plan(monitoring_target, model_panel)
         with st.expander("Monitoring variables", expanded=False):
             st.caption("Use the same curated variable controls for rolling validation.")
             monitoring_predictors = st.multiselect(

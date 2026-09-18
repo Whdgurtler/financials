@@ -15,6 +15,10 @@ Usage:
 Reads (from --export-dir, default data/hf_export/):
     financial_data.parquet, institutions.parquet, fred_data.parquet
 
+For every approved account/economic candidate, each model receives its
+contemporaneous value, quarterly lags through --n-lags, and trailing rolling
+averages before XGBoost ranks feature importance.
+
 Writes (to --export-dir):
     forecast_metrics.parquet     -- one row per (institution, target, horizon)
     forecast_predictions.parquet -- rolling backtest fold predictions
@@ -40,6 +44,7 @@ from src.y9c.forecasting import (
     HORIZON_LABELS,
     MODEL_LABELS,
     build_model_panel,
+    candidate_feature_plan,
     convert_ytd_to_quarterly,
     run_forecast,
 )
@@ -58,13 +63,13 @@ TOP_IMPORTANCE_FEATURES = 15
 
 
 def _process_institution(args) -> tuple[list, list, list, list]:
-    rssd_id, bank_panel, horizons, max_folds, n_lags, economic_columns = args
+    rssd_id, bank_panel, horizons, max_folds, n_lags, _economic_columns = args
     metrics_rows, prediction_frames, future_frames, importance_frames = [], [], [], []
 
     for target_code in CORE_TARGETS:
         for horizon in horizons:
             try:
-                statement_type = get_all_mdrm_codes()[target_code]["statement"]
+                predictor_codes, economic_columns = candidate_feature_plan(target_code, bank_panel)
                 result = run_forecast(
                     bank_panel,
                     rssd_id,
@@ -72,7 +77,7 @@ def _process_institution(args) -> tuple[list, list, list, list]:
                     MODEL_NAME,
                     horizon,
                     n_lags=n_lags,
-                    predictor_codes=CORE_PREDICTORS[statement_type],
+                    predictor_codes=predictor_codes,
                     economic_columns=economic_columns,
                     max_folds=max_folds,
                     model_n_jobs=1,

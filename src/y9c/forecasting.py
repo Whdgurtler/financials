@@ -59,6 +59,41 @@ CORE_PREDICTORS = {
     ],
 }
 
+# Candidate variables are deliberately selected by economic relationship before
+# XGBoost is trained. XGBoost can rank these candidates, but it must not search
+# the full regulatory catalog for accidental correlations.
+ECONOMIC_FEATURE_GROUPS = {
+    "rates": ["Fed Funds Rate", "2Y Treasury Yield", "10Y Treasury Yield", "Yield Curve (10Y-2Y)"],
+    "macro": ["Unemployment Rate", "CPI Inflation (YoY %)"],
+    "credit": ["HY Credit Spread (OAS)", "IG Credit Spread (OAS)", "Mortgage Delinquency", "Credit Card Delinquency"],
+}
+
+ACCOUNT_FEATURE_GROUPS = {
+    "scale_credit": ["BHCK2170", "BHCKB528", "BHCK2122", "BHCK5369"],
+    "securities": ["BHCK1754", "BHCK1773", "BHCK3545"],
+    "funding_capital": ["BHDM6636", "BHDM6631", "BHCK2948", "BHCK3210", "BHCK3632", "BHCK3200"],
+    "interest_income": ["BHCK4010", "BHCK4074"],
+    "interest_expense": ["BHCK4073"],
+    "credit_cost": ["BHCK4230", "BHCKJJ33"],
+    "operating_results": ["BHCK4079", "BHCK4093", "BHCK4135", "BHCK4301", "BHCK4302"],
+}
+
+# Each statement target gets economically related account groups and FRED
+# groups. The target itself is always added by _feature_columns.
+TARGET_FEATURE_GROUPS = {
+    "balance_sheet": {
+        "scale_credit": {"rates", "macro", "credit"},
+        "securities": {"rates", "macro"},
+        "funding_capital": {"rates", "macro"},
+    },
+    "income_statement": {
+        "interest_income": {"rates", "macro", "credit"},
+        "interest_expense": {"rates", "macro"},
+        "credit_cost": {"credit", "macro", "rates"},
+        "operating_results": {"macro", "rates", "credit"},
+    },
+}
+
 
 @dataclass(frozen=True)
 class ForecastResult:
@@ -154,6 +189,41 @@ def _fred_columns(panel_df: pd.DataFrame) -> list[str]:
     return [col for col in panel_df.columns if col not in meta_cols and col not in code_cols]
 
 
+def candidate_feature_plan(target_code: str, panel_df: pd.DataFrame) -> tuple[list[str], list[str]]:
+    """Return the pre-model account and economic candidates for one target."""
+    code_info = _all_code_info()
+    if target_code not in code_info:
+        raise ValueError(f"Unknown target code: {target_code}")
+
+    statement_type = code_info[target_code]["statement"]
+    target_category = code_info[target_code]["category"]
+    statement_groups = TARGET_FEATURE_GROUPS.get(statement_type, {})
+    account_groups = set()
+    economic_groups = set()
+    for group_name, group_economic_names in statement_groups.items():
+        group_codes = ACCOUNT_FEATURE_GROUPS.get(group_name, [])
+        if target_code in group_codes or target_category == group_name:
+            account_groups.add(group_name)
+            economic_groups.update(group_economic_names)
+
+    if not account_groups:
+        account_groups = set(statement_groups)
+        for group_names in statement_groups.values():
+            economic_groups.update(group_names)
+
+    account_codes = []
+    for group_name in account_groups:
+        account_codes.extend(ACCOUNT_FEATURE_GROUPS[group_name])
+    account_codes = list(dict.fromkeys(code for code in account_codes if code in panel_df.columns))
+    selected_economic_names = {
+        name
+        for group_name in economic_groups
+        for name in ECONOMIC_FEATURE_GROUPS.get(group_name, [])
+    }
+    economic_columns = [name for name in _fred_columns(panel_df) if name in selected_economic_names]
+    return account_codes, economic_columns
+
+
 def _feature_columns(
     statement_type: str,
     target_code: str,
@@ -211,9 +281,15 @@ def _prepare_problem(
 
     statement_type = code_info[target_code]["statement"]
     target_name = code_info[target_code]["description"]
+    default_predictors, default_economics = candidate_feature_plan(target_code, panel_df)
     available_fred = _fred_columns(panel_df)
-    fred_cols = [col for col in (economic_columns if economic_columns is not None else available_fred) if col in available_fred]
-    predictor_codes = _feature_columns(statement_type, target_code, panel_df, predictor_codes)
+    fred_cols = [col for col in (economic_columns if economic_columns is not None else default_economics) if col in available_fred]
+    predictor_codes = _feature_columns(
+        statement_type,
+        target_code,
+        panel_df,
+        predictor_codes if predictor_codes is not None else default_predictors,
+    )
 
     bank = panel_df[panel_df["rssd_id"] == rssd_id].sort_values("report_date").copy()
     if bank.empty:
@@ -231,13 +307,22 @@ def _prepare_problem(
     bank["year"] = periods.dt.year
     bank["quarter"] = periods.dt.quarter
 
-    feature_frame = bank[["report_date", "year", "quarter"] + fred_cols].copy()
+    feature_frame = bank[["report_date", "year", "quarter"]].copy()
     for code in predictor_codes:
         series = bank[code]
+        feature_frame[f"{code}__current"] = series
         for lag in range(1, n_lags + 1):
             feature_frame[f"{code}__lag{lag}"] = series.shift(lag)
         feature_frame[f"{code}__roll4"] = series.shift(1).rolling(4, min_periods=1).mean()
         feature_frame[f"{code}__roll8"] = series.shift(1).rolling(8, min_periods=1).mean()
+
+    for name in fred_cols:
+        series = bank[name]
+        feature_frame[f"{name}__current"] = series
+        for lag in range(1, n_lags + 1):
+            feature_frame[f"{name}__lag{lag}"] = series.shift(lag)
+        feature_frame[f"{name}__roll4"] = series.shift(1).rolling(4, min_periods=1).mean()
+        feature_frame[f"{name}__roll8"] = series.shift(1).rolling(8, min_periods=1).mean()
 
     feature_frame["quarter_sin"] = np.sin(2 * np.pi * feature_frame["quarter"] / 4)
     feature_frame["quarter_cos"] = np.cos(2 * np.pi * feature_frame["quarter"] / 4)
